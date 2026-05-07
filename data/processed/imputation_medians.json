@@ -1,0 +1,21 @@
+{
+  "loan_amnt": 12000.0,
+  "funded_amnt": 12000.0,
+  "term": 36.0,
+  "int_rate": 12.18,
+  "installment": 368.41,
+  "emp_length": 6.0,
+  "annual_inc": 65000.0,
+  "dti": 17.11,
+  "delinq_2yrs": 0.0,
+  "fico_range_low": 690.0,
+  "fico_range_high": 694.0,
+  "inq_last_6mths": 0.0,
+  "open_acc": 11.0,
+  "pub_rec": 0.0,
+  "revol_bal": 11149.0,
+  "revol_util": 51.3,
+  "total_acc": 23.0,
+  "grade": 2.0,
+  "sub_grade": 10.0
+}

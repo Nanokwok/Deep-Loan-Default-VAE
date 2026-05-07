@@ -1,7 +1,18 @@
-# Dataset
-**/data/raw/*.csv
-**/data/processed/*.csv
+# Virtual Environment
+.venv/
+venv/
+env/
+
+# Python artifacts
 __pycache__/
-.ipynb_checkpoints/
 *.pyc
-/venv
+*.pyo
+*.pyd
+
+# Jupyter Notebook
+.ipynb_checkpoints/
+
+# Dataset & Heavy Files
+**/data/raw/*.csv
+**/data/processed/*.npy
+**/data/processed/*.pkl
