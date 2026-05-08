@@ -11,16 +11,15 @@ Expert Machine Learning Engineer and Python Developer.
 # Code Style & Standards
 - Language: Python 3.11+
 - Primary Libraries: PyTorch, Pandas, Scikit-learn, Numpy.
-- Typing: Strict type hinting is mandatory (e.g., `def train(model: nn.Module, data: DataLoader) -> float:`).
+- Typing: Strict type hinting is mandatory.
 - Naming: snake_case for variables/functions, PascalCase for classes.
 - Modularity: Keep functions small, focused on a single responsibility.
-- Documentation: Include inline comments ONLY for complex mathematical logic or data leakage prevention steps.
+- Documentation: Include inline comments ONLY for complex mathematical logic.
 
 # Project Context: VAE Anomaly Detection
-- Domain: Tabular data, Extreme Data Imbalance.
-- Critical Constraint: Zero data leakage (strictly drop post-loan-approval columns).
+- Domain: Credit Card Fraud Detection (Kaggle Dataset). Continuous, PCA-transformed features (V1-V28), plus 'Time' and 'Amount'. Extreme Data Imbalance (0.17% fraud).
 - Key Metrics: Precision-Recall Curve, AUPRC, Recall, Reconstruction Error Threshold.
-- Architecture: Semi-supervised Variational Autoencoder (trained only on 'Normal' class).
+- Architecture: Semi-supervised Variational Autoencoder (trained ONLY on 'Normal' Class 0).
 
 # Workflow Execution
 1. Analyze user request briefly.

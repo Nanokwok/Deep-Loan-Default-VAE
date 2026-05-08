@@ -1,28 +1,24 @@
 """
-Preprocessing pipeline for the Deep Loan Default VAE project.
+Preprocessing pipeline — Credit Card Fraud Detection (semi-supervised VAE).
 
-Steps:
-  1. Load raw CSV (accepted_2007_to_2018Q4.csv)
-  2. Select only APPLICATION_FEATURES + TARGET_COL
-  3. Filter rows to "Fully Paid" (0) and "Charged Off" (1)
-  4. Handle missing values (NaNs) with per-column median (fit on train only)
-  5. Apply log1p to right-skewed columns (annual_inc, dti, revol_util)
-     — compresses extreme tails; log1p(0) = 0, safe for all non-negative data
-  6. Winsorize all columns at p1/p99 (bounds fitted on train only)
-     — clips any remaining extreme values after log compression
-  7. Scale features with StandardScaler (fit on train only)
-  8. Semi-supervised split:
-       train  — Fully Paid only (VAE trains on normal class)
-       val    — stratified mix of both classes
-  9. Save arrays + feature_columns.json to DATA_PROC_DIR
+Pipeline:
+  1. Load creditcard.csv
+  2. Semi-supervised split:
+       X_train — 80% of Class 0 (Normal) only
+       X_val   — 20% of Class 0  +  100% of Class 1 (Fraud)
+  3. Scale features (fit on X_train only):
+       'Time'   → StandardScaler
+       'Amount' → RobustScaler   (heavy-tailed, outlier-robust)
+       V1–V28   → unchanged      (already PCA-transformed, ~N(0,1))
+  4. Save to data/processed/
 
-Outputs (DATA_PROC_DIR/):
-  X_train.npy        — (N_train, 6) float32, normal only
-  y_train.npy        — (N_train,)   all zeros
-  X_val.npy          — (N_val,   6) float32, mixed
-  y_val.npy          — (N_val,)   0/1
-  feature_columns.json
-  scaler.pkl         — fitted StandardScaler (for inference)
+Outputs:
+  X_train.npy          (N_train, 30) float32 — normal only
+  X_val.npy            (N_val,   30) float32 — mixed
+  y_train.npy          (N_train,)    int8    — all zeros
+  y_val.npy            (N_val,)      int8    — 0/1
+  feature_columns.json — ordered list of 30 feature names
+  scaler.pkl           — {'time': StandardScaler, 'amount': RobustScaler}
 """
 
 from __future__ import annotations
@@ -35,7 +31,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import StandardScaler
+from sklearn.preprocessing import RobustScaler, StandardScaler
 
 import src.config as cfg
 
@@ -46,225 +42,142 @@ logging.basicConfig(
 )
 log = logging.getLogger(__name__)
 
-
-# ── Constants ──────────────────────────────────────────────────────────────────
-
-LABEL_MAP: dict[str, int] = {
-    cfg.NORMAL_LABEL:  0,   # "Fully Paid"
-    cfg.ANOMALY_LABEL: 1,   # "Charged Off"
-}
-
-# Columns with severe right skew (confirmed empirically: max|z| > 6 after StandardScaler).
-# log1p compresses the long tail while preserving zero (log1p(0) = 0).
-# All three are non-negative by definition, so log1p is always safe.
-LOG1P_COLS: list[str] = ["annual_inc", "dti", "revol_util"]
-
-VAL_SIZE:    float = 0.20   # 80 / 20 split; train keeps normal rows only
+VAL_SIZE:    float = 0.20
 RANDOM_SEED: int   = cfg.RANDOM_SEED
+
+# Feature columns in output order (Class column is dropped)
+FEATURE_COLS: list[str] = (
+    ["Time"]
+    + [f"V{i}" for i in range(1, 29)]
+    + ["Amount"]
+)   # len == 30
 
 
 # ── Pipeline steps ─────────────────────────────────────────────────────────────
 
-def load_and_filter(csv_path: str | Path) -> pd.DataFrame:
-    """
-    Read raw CSV, keep only the 6 financial features + target column,
-    and filter to the two target classes.
-    """
-    cols_needed = cfg.APPLICATION_FEATURES + [cfg.TARGET_COL]
-
+def load_data(csv_path: str | Path) -> pd.DataFrame:
+    """Load creditcard.csv and verify expected columns."""
     log.info("Reading %s ...", csv_path)
-    df = pd.read_csv(
-        csv_path,
-        usecols=cols_needed,
-        low_memory=False,
-    )
-    log.info("Raw rows: %d", len(df))
-
-    # Strip accidental leading/trailing whitespace from the target column
-    df[cfg.TARGET_COL] = df[cfg.TARGET_COL].astype(str).str.strip()
-
-    # Keep only the two classes we care about
-    df = df[df[cfg.TARGET_COL].isin(LABEL_MAP)].copy()
-    df[cfg.TARGET_COL] = df[cfg.TARGET_COL].map(LABEL_MAP)
-
+    df = pd.read_csv(csv_path)
     log.info(
-        "After class filter: %d rows  |  Fully Paid=%d  Charged Off=%d",
+        "Loaded  rows=%d  Class distribution: 0=%d  1=%d",
         len(df),
         (df[cfg.TARGET_COL] == 0).sum(),
         (df[cfg.TARGET_COL] == 1).sum(),
     )
+    missing = [c for c in FEATURE_COLS + [cfg.TARGET_COL] if c not in df.columns]
+    if missing:
+        raise ValueError(f"Missing expected columns: {missing}")
     return df
 
 
-def split_data(
+def split_semi_supervised(
     df: pd.DataFrame,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.Series, pd.Series]:
     """
-    Semi-supervised split:
-      - train : normal (Fully Paid) rows only
-      - val   : stratified 20% of the full dataset (both classes)
-
-    The validation set is carved out first so its rows never contaminate
-    the scaler / imputer fit.
+    X_train : 80% of Class 0 rows only.
+    X_val   : 20% of Class 0 rows  +  ALL Class 1 rows.
+    Scalers must be fit on X_train only (no val/fraud leakage).
     """
-    X = df[cfg.APPLICATION_FEATURES]
-    y = df[cfg.TARGET_COL]
+    normal  = df[df[cfg.TARGET_COL] == 0][FEATURE_COLS].reset_index(drop=True)
+    fraud   = df[df[cfg.TARGET_COL] == 1][FEATURE_COLS].reset_index(drop=True)
 
-    X_train_pool, X_val, y_train_pool, y_val = train_test_split(
-        X, y,
-        test_size=VAL_SIZE,
-        stratify=y,
-        random_state=RANDOM_SEED,
+    X_tr, X_val_normal = train_test_split(
+        normal, test_size=VAL_SIZE, random_state=RANDOM_SEED
     )
 
-    # Train on normal class only (semi-supervised)
-    normal_mask = y_train_pool == 0
-    X_train = X_train_pool[normal_mask]
-    y_train = y_train_pool[normal_mask]
+    X_val   = pd.concat([X_val_normal, fraud], ignore_index=True)
+    y_train = pd.Series(np.zeros(len(X_tr),      dtype=np.int8), name=cfg.TARGET_COL)
+    y_val   = pd.Series(
+        np.concatenate([
+            np.zeros(len(X_val_normal), dtype=np.int8),
+            np.ones(len(fraud),         dtype=np.int8),
+        ]),
+        name=cfg.TARGET_COL,
+    )
 
     log.info(
-        "Split  train(normal)=%d  val(mixed)=%d  val_anomaly_rate=%.1f%%",
-        len(X_train),
-        len(X_val),
-        y_val.mean() * 100,
+        "Split  train(normal)=%d  val_normal=%d  val_fraud=%d  "
+        "val_fraud_rate=%.2f%%",
+        len(X_tr), len(X_val_normal), len(fraud),
+        len(fraud) / len(X_val) * 100,
     )
     return (
-        X_train.reset_index(drop=True),
-        X_val.reset_index(drop=True),
-        y_train.reset_index(drop=True),
-        y_val.reset_index(drop=True),
+        X_tr.reset_index(drop=True),
+        X_val,
+        y_train,
+        y_val,
     )
 
 
-def impute(
+def scale_features(
     X_train: pd.DataFrame,
-    X_val: pd.DataFrame,
-) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Fill NaNs with per-column median. Median fitted on train only."""
-    medians = X_train.median()
-    missing_train = int(X_train.isnull().sum().sum())
-    missing_val   = int(X_val.isnull().sum().sum())
-    if missing_train or missing_val:
-        log.info(
-            "Imputing NaNs  train=%d  val=%d  (median from train)",
-            missing_train, missing_val,
-        )
-    X_train = X_train.fillna(medians)
-    X_val   = X_val.fillna(medians)
-    return X_train, X_val
-
-
-def apply_log1p(
-    X_train: pd.DataFrame,
-    X_val: pd.DataFrame,
-) -> tuple[pd.DataFrame, pd.DataFrame]:
+    X_val:   pd.DataFrame,
+) -> tuple[np.ndarray, np.ndarray, dict[str, object]]:
     """
-    Apply np.log1p to LOG1P_COLS in both splits.
-    Only transforms columns that are present in APPLICATION_FEATURES.
-    Parameterless — no fit needed, applied identically to train and val.
+    Fit scalers on X_train, transform both splits.
+    Returns float32 arrays and a scalers dict for serialisation.
     """
-    cols = [c for c in LOG1P_COLS if c in X_train.columns]
-    if cols:
-        X_train = X_train.copy()
-        X_val   = X_val.copy()
-        X_train[cols] = np.log1p(X_train[cols])
-        X_val[cols]   = np.log1p(X_val[cols])
-        log.info("log1p applied to: %s", cols)
-    return X_train, X_val
+    time_scaler   = StandardScaler()
+    amount_scaler = RobustScaler()
 
+    X_train = X_train.copy()
+    X_val   = X_val.copy()
 
-def winsorize(
-    X_train: pd.DataFrame,
-    X_val: pd.DataFrame,
-    lower_pct: float = 1.0,
-    upper_pct: float = 99.0,
-) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """
-    Clip each column to [p1, p99] computed on X_train.
-    Eliminates extreme outliers that survive log1p (e.g. annual_inc > $10M).
-    Bounds are fitted on train only — no leakage into val.
-    """
-    lo = np.percentile(X_train, lower_pct, axis=0)   # shape (n_features,)
-    hi = np.percentile(X_train, upper_pct, axis=0)
-    X_train = X_train.clip(lower=lo, upper=hi, axis=1)
-    X_val   = X_val.clip(lower=lo,   upper=hi, axis=1)
-    log.info(
-        "Winsorized at p%.0f/p%.0f (fitted on train)",
-        lower_pct, upper_pct,
+    X_train["Time"]   = time_scaler.fit_transform(X_train[["Time"]])
+    X_train["Amount"] = amount_scaler.fit_transform(X_train[["Amount"]])
+
+    X_val["Time"]   = time_scaler.transform(X_val[["Time"]])
+    X_val["Amount"] = amount_scaler.transform(X_val[["Amount"]])
+
+    log.info("Scalers fitted on train.  Time~N(0,1)  Amount~RobustScaled")
+
+    return (
+        X_train[FEATURE_COLS].to_numpy(dtype=np.float32),
+        X_val[FEATURE_COLS].to_numpy(dtype=np.float32),
+        {"time": time_scaler, "amount": amount_scaler},
     )
-    return X_train, X_val
-
-
-def scale(
-    X_train: pd.DataFrame,
-    X_val: pd.DataFrame,
-) -> tuple[np.ndarray, np.ndarray, StandardScaler]:
-    """StandardScaler fitted on train only. Returns float32 arrays."""
-    scaler = StandardScaler()
-    X_train_sc = scaler.fit_transform(X_train).astype(np.float32)
-    X_val_sc   = scaler.transform(X_val).astype(np.float32)
-    log.info(
-        "Scaled  train_mean~0: %s  train_std~1: %s",
-        np.allclose(X_train_sc.mean(axis=0), 0, atol=1e-5),
-        np.allclose(X_train_sc.std(axis=0),  1, atol=1e-2),
-    )
-    return X_train_sc, X_val_sc, scaler
 
 
 def save_artifacts(
     proc_dir: str | Path,
-    X_train: np.ndarray,
-    X_val:   np.ndarray,
-    y_train: pd.Series,
-    y_val:   pd.Series,
-    scaler:  StandardScaler,
+    X_train:  np.ndarray,
+    X_val:    np.ndarray,
+    y_train:  pd.Series,
+    y_val:    pd.Series,
+    scalers:  dict[str, object],
 ) -> None:
-    """Write all processed arrays and the scaler to proc_dir."""
     out = Path(proc_dir)
     out.mkdir(parents=True, exist_ok=True)
 
     np.save(out / "X_train.npy", X_train)
     np.save(out / "X_val.npy",   X_val)
-    np.save(out / "y_train.npy", y_train.to_numpy().astype(np.int8))
-    np.save(out / "y_val.npy",   y_val.to_numpy().astype(np.int8))
+    np.save(out / "y_train.npy", y_train.to_numpy())
+    np.save(out / "y_val.npy",   y_val.to_numpy())
 
     with open(out / "feature_columns.json", "w") as f:
-        json.dump(cfg.APPLICATION_FEATURES, f, indent=2)
+        json.dump(FEATURE_COLS, f, indent=2)
 
     with open(out / "scaler.pkl", "wb") as f:
-        pickle.dump(scaler, f)
+        pickle.dump(scalers, f)
 
     log.info("Saved to %s:", out)
     log.info("  X_train.npy  %s", X_train.shape)
     log.info("  X_val.npy    %s", X_val.shape)
-    log.info("  y_train.npy  %s", y_train.shape)
-    log.info("  y_val.npy    %s", y_val.shape)
-    log.info("  feature_columns.json  %s", cfg.APPLICATION_FEATURES)
-    log.info("  scaler.pkl")
+    log.info("  y_train.npy  all-zeros  n=%d", len(y_train))
+    log.info("  y_val.npy    fraud_rate=%.2f%%", y_val.mean() * 100)
 
 
-# ── Main entry point ───────────────────────────────────────────────────────────
+# ── Entry point ────────────────────────────────────────────────────────────────
 
 def preprocess() -> None:
-    """Run the full preprocessing pipeline end-to-end."""
-    df = load_and_filter(cfg.RAW_CSV)
+    df = load_data(cfg.RAW_CSV)
 
-    X_train, X_val, y_train, y_val = split_data(df)
+    X_train, X_val, y_train, y_val = split_semi_supervised(df)
 
-    X_train, X_val = impute(X_train, X_val)
+    X_train_sc, X_val_sc, scalers = scale_features(X_train, X_val)
 
-    X_train, X_val = apply_log1p(X_train, X_val)
-
-    X_train, X_val = winsorize(X_train, X_val)
-
-    X_train_sc, X_val_sc, scaler = scale(X_train, X_val)
-
-    save_artifacts(
-        cfg.DATA_PROC_DIR,
-        X_train_sc, X_val_sc,
-        y_train, y_val,
-        scaler,
-    )
+    save_artifacts(cfg.DATA_PROC_DIR, X_train_sc, X_val_sc, y_train, y_val, scalers)
     log.info("Preprocessing complete.")
 
 
