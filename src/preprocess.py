@@ -12,6 +12,9 @@ Pipeline (all statistical fits on train split only — zero leakage):
         · Test  : Fully Paid + Charged Off at natural default rate
                   (held-out; touched only for final reported metrics)
   6.  Impute: median for numeric, mode for nominal (fit on train only).
+  6b. Winsorize: clip numeric cols at [p1, p99] per column (fit on train only).
+       Prevents extreme outliers (e.g. annual_inc reaching 149 σ after scaling)
+       from dominating the VAE MSE reconstruction loss.
   7.  Frequency-bin nominal cols (fit on train only):
         keep Top-N most frequent categories per column,
         map all others → 'other'  (caps OHE width at ≤ N+1 dummies per group).
@@ -66,6 +69,11 @@ TARGET_ANOMALY_RATE: float | None = None
 # Bernoulli variance identity: Var = p*(1-p) → threshold ≈ 0.0099.
 # Must match the EDA notebook's DEAD_COL_THRESH.
 DEAD_COL_ACTIVATION_THRESHOLD: float = 0.01
+
+# Percentile bounds for winsorization (fit on train only).
+# Clips extreme outliers before StandardScaler so no feature exceeds ~5 σ.
+WINSORIZE_LOWER: float = 0.01   # 1st  percentile
+WINSORIZE_UPPER: float = 0.99   # 99th percentile
 
 # Explicit ordinal maps — only where order is semantically real
 GRADE_MAP: dict[str, int] = {g: i + 1 for i, g in enumerate("ABCDEFG")}
@@ -237,7 +245,13 @@ def semi_supervised_split(df: pd.DataFrame) -> tuple[
         labels   = np.array(
             [0] * len(normal_part) + [1] * len(anomaly_part), dtype=np.int8
         )
-        return combined[APPLICATION_FEATURES].reset_index(drop=True), labels
+        # Shuffle so val/test are not ordered [all normals … all anomalies]
+        rng  = np.random.default_rng(RANDOM_SEED)
+        perm = rng.permutation(len(combined))
+        return (
+            combined.iloc[perm][APPLICATION_FEATURES].reset_index(drop=True),
+            labels[perm],
+        )
 
     val_df,  val_labels  = _build_split(val_normal,  val_anomaly)
     test_df, test_labels = _build_split(test_normal, test_anomaly)
@@ -292,6 +306,40 @@ def impute(
         df[col] = df[col].fillna(val)
 
     return df, medians, modes
+
+
+
+def fit_winsorizer(
+    df: pd.DataFrame,
+) -> dict[str, tuple[float, float]]:
+    """
+    Compute per-column [p_lower, p_upper] clip bounds on all numeric columns.
+    Called once on train only; bounds reused for val and test.
+    """
+    bounds: dict[str, tuple[float, float]] = {}
+    cols = NUMERIC_COLS + ["grade", "sub_grade"]
+    for col in cols:
+        if col in df.columns:
+            lo = float(df[col].quantile(WINSORIZE_LOWER))
+            hi = float(df[col].quantile(WINSORIZE_UPPER))
+            bounds[col] = (lo, hi)
+    log.info(
+        "Winsorizer fitted on %d columns  (p%.0f / p%.0f).",
+        len(bounds), WINSORIZE_LOWER * 100, WINSORIZE_UPPER * 100,
+    )
+    return bounds
+
+
+def apply_winsorizer(
+    df: pd.DataFrame,
+    bounds: dict[str, tuple[float, float]],
+) -> pd.DataFrame:
+    """Clip each numeric column to its pre-fitted [p_lower, p_upper] bounds."""
+    df = df.copy()
+    for col, (lo, hi) in bounds.items():
+        if col in df.columns:
+            df[col] = df[col].clip(lower=lo, upper=hi)
+    return df
 
 
 def fit_frequency_binner(df: pd.DataFrame) -> dict[str, list[str]]:
@@ -431,9 +479,10 @@ def save_artifacts(
     scaler:      StandardScaler,
     ohe:         OneHotEncoder,
     binner:      dict[str, list[str]],
-    vt_selector: VarianceThreshold,
-    medians:     dict[str, float],
-    modes:       dict[str, str],
+    vt_selector:       VarianceThreshold,
+    winsorizer_bounds: dict[str, tuple[float, float]],
+    medians:           dict[str, float],
+    modes:             dict[str, str],
     feature_names: list[str],
     out_dir:     str | Path,
 ) -> None:
@@ -455,6 +504,8 @@ def save_artifacts(
         with open(out / fname, "wb") as f:
             pickle.dump(obj, f)
 
+    with open(out / "winsorizer_bounds.json", "w") as f:
+        json.dump({k: list(v) for k, v in winsorizer_bounds.items()}, f, indent=2)
     with open(out / "imputation_medians.json", "w") as f:
         json.dump(medians, f, indent=2)
     with open(out / "imputation_modes.json", "w") as f:
@@ -492,6 +543,12 @@ def run() -> None:
     train_raw, medians, modes = impute(train_raw)
     val_raw,   _,       _     = impute(val_raw,  medians=medians, modes=modes)
     test_raw,  _,       _     = impute(test_raw, medians=medians, modes=modes)
+
+    # ── 6b: Winsorize (fit on train) ─────────────────────────────────────────
+    win_bounds = fit_winsorizer(train_raw)
+    train_raw  = apply_winsorizer(train_raw, win_bounds)
+    val_raw    = apply_winsorizer(val_raw,   win_bounds)
+    test_raw   = apply_winsorizer(test_raw,  win_bounds)
 
     # ── 7: Frequency binning (fit on train) ───────────────────────────────────
     binner    = fit_frequency_binner(train_raw)
@@ -532,6 +589,7 @@ def run() -> None:
         val_arr,  val_labels,
         test_arr, test_labels,
         scaler, ohe, binner, vt_selector,
+        win_bounds,
         medians, modes, feature_names,
         DATA_PROC_DIR,
     )
