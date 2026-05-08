@@ -11,6 +11,10 @@ DATA_RAW_DIR    = os.path.join(ROOT_DIR, "data", "raw")
 DATA_PROC_DIR   = os.path.join(ROOT_DIR, "data", "processed")
 REPORTS_DIR     = os.path.join(ROOT_DIR, "reports")
 FIGURES_DIR     = os.path.join(REPORTS_DIR, "figures")
+EXPERIMENTS_DIR = os.path.join(ROOT_DIR, "experiments")
+# Override in Colab to persist to Drive across VM resets, e.g.:
+#   import src.config as cfg
+#   cfg.EXPERIMENTS_DIR = "/content/drive/MyDrive/Loan_VAE_Project"
 
 RAW_CSV         = os.path.join(DATA_RAW_DIR, "accepted_2007_to_2018Q4.csv")
 
