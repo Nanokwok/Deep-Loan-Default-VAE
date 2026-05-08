@@ -62,7 +62,7 @@ class BetaVAE(nn.Module):
     # ── Architecture builders ──────────────────────────────────────────────────
 
     @staticmethod
-    def _build_encoder(input_dim: int) -> nn.Sequential:
+    def _build_encoder(input_dim: int, dropout_rate: float = 0.2) -> nn.Sequential:
         """Funnel: input_dim → ENCODER_DIMS[0] → … → ENCODER_DIMS[-1]."""
         layers: list[nn.Module] = []
         in_size = input_dim
@@ -71,12 +71,13 @@ class BetaVAE(nn.Module):
                 nn.Linear(in_size, out_size),
                 nn.BatchNorm1d(out_size),   # stabilises training on tabular data
                 nn.ReLU(),
+                nn.Dropout(p=dropout_rate),
             ]
             in_size = out_size
         return nn.Sequential(*layers)
 
     @staticmethod
-    def _build_decoder(input_dim: int) -> nn.Sequential:
+    def _build_decoder(input_dim: int, dropout_rate: float = 0.2) -> nn.Sequential:
         """
         Mirror funnel: LATENT_DIM → DECODER_DIMS[0] → … → input_dim.
         No activation on the final layer — output is in the same space as the
@@ -89,6 +90,7 @@ class BetaVAE(nn.Module):
                 nn.Linear(in_size, out_size),
                 nn.BatchNorm1d(out_size),
                 nn.ReLU(),
+                nn.Dropout(p=dropout_rate),
             ]
             in_size = out_size
         layers.append(nn.Linear(in_size, input_dim))   # linear output
