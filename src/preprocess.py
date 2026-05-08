@@ -12,9 +12,11 @@ Pipeline (all statistical fits on train split only — zero leakage):
         · Test  : Fully Paid + Charged Off at natural default rate
                   (held-out; touched only for final reported metrics)
   6.  Impute: median for numeric, mode for nominal (fit on train only).
-  6b. Winsorize: clip numeric cols at [p1, p99] per column (fit on train only).
-       Prevents extreme outliers (e.g. annual_inc reaching 149 σ after scaling)
-       from dominating the VAE MSE reconstruction loss.
+  6b. Log1p: log(1+x) on right-skewed numeric cols (parameterless; applied to
+       all splits identically). Compresses heavy tails of annual_inc, revol_bal,
+       dti, etc. before StandardScaler — brings them within ~3–5 σ.
+  6c. Winsorize: clip at [p1, p99] in log-space (fit on train only).
+       Safety net for any residual outliers after log transform.
   7.  Frequency-bin nominal cols (fit on train only):
         keep Top-N most frequent categories per column,
         map all others → 'other'  (caps OHE width at ≤ N+1 dummies per group).
@@ -74,6 +76,23 @@ DEAD_COL_ACTIVATION_THRESHOLD: float = 0.01
 # Clips extreme outliers before StandardScaler so no feature exceeds ~5 σ.
 WINSORIZE_LOWER: float = 0.01   # 1st  percentile
 WINSORIZE_UPPER: float = 0.99   # 99th percentile
+
+# Right-skewed numeric columns that receive log(1+x) before StandardScaler.
+# All must be non-negative after imputation (any negatives are clipped to 0 first).
+LOG1P_COLS: list[str] = [
+    "annual_inc",      # income — extreme right skew ($5 M outliers)
+    "revol_bal",       # revolving balance — zero-inflated + heavy tail
+    "dti",             # debt-to-income ratio — right-skewed
+    "loan_amnt",       # loan amount
+    "funded_amnt",     # funded amount
+    "installment",     # monthly payment
+    "delinq_2yrs",     # count — zero-inflated
+    "inq_last_6mths",  # count — zero-inflated
+    "open_acc",        # count
+    "pub_rec",         # count — zero-inflated
+    "revol_util",      # 0–100 % utilization — right-skewed
+    "total_acc",       # count
+]
 
 # Explicit ordinal maps — only where order is semantically real
 GRADE_MAP: dict[str, int] = {g: i + 1 for i, g in enumerate("ABCDEFG")}
@@ -309,6 +328,22 @@ def impute(
 
 
 
+def apply_log1p(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Apply log(1+x) to right-skewed numeric columns.
+
+    Parameterless — no train/val/test distinction needed.
+    Negative values are clipped to 0 before the transform
+    (guards against rare data-quality issues in dti / revol_util).
+    Columns transformed are listed in LOG1P_COLS.
+    """
+    df = df.copy()
+    for col in LOG1P_COLS:
+        if col in df.columns:
+            df[col] = np.log1p(df[col].clip(lower=0))
+    return df
+
+
 def fit_winsorizer(
     df: pd.DataFrame,
 ) -> dict[str, tuple[float, float]]:
@@ -504,6 +539,8 @@ def save_artifacts(
         with open(out / fname, "wb") as f:
             pickle.dump(obj, f)
 
+    with open(out / "log1p_cols.json", "w") as f:
+        json.dump(LOG1P_COLS, f, indent=2)
     with open(out / "winsorizer_bounds.json", "w") as f:
         json.dump({k: list(v) for k, v in winsorizer_bounds.items()}, f, indent=2)
     with open(out / "imputation_medians.json", "w") as f:
@@ -544,7 +581,12 @@ def run() -> None:
     val_raw,   _,       _     = impute(val_raw,  medians=medians, modes=modes)
     test_raw,  _,       _     = impute(test_raw, medians=medians, modes=modes)
 
-    # ── 6b: Winsorize (fit on train) ─────────────────────────────────────────
+    # ── 6b: Log1p transform (parameterless — applied identically to all splits) ──
+    train_raw = apply_log1p(train_raw)
+    val_raw   = apply_log1p(val_raw)
+    test_raw  = apply_log1p(test_raw)
+
+    # ── 6c: Winsorize in log-space (fit on train) ─────────────────────────────
     win_bounds = fit_winsorizer(train_raw)
     train_raw  = apply_winsorizer(train_raw, win_bounds)
     val_raw    = apply_winsorizer(val_raw,   win_bounds)
