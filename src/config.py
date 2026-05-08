@@ -34,11 +34,11 @@ APPLICATION_FEATURES = [
 ]
 
 # ── VAE Hyperparameters ────────────────────────────────────
-LATENT_DIM      = 16
-ENCODER_DIMS    = [48, 32, 16]   # hidden layer sizes (encoder)
+LATENT_DIM      = 32
+ENCODER_DIMS    = [128,64,32]   # hidden layer sizes (encoder)
 DECODER_DIMS    = [16, 32, 48]   # mirror of encoder
-BETA            = 0.01
-LEARNING_RATE   = 1e-3
+BETA            = 0.05
+LEARNING_RATE   = 5e-4
 BATCH_SIZE      = 512
 NUM_EPOCHS      = 100
 RANDOM_SEED     = 42
