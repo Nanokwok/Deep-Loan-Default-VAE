@@ -40,7 +40,7 @@ DECODER_DIMS    = [16, 32, 48]   # mirror of encoder
 BETA            = 0.1
 LEARNING_RATE   = 1e-3
 BATCH_SIZE      = 512
-NUM_EPOCHS      = 50
+NUM_EPOCHS      = 2
 RANDOM_SEED     = 42
 
 # ── Phase 4 Design Warnings ───────────────────────────────────────────────────
