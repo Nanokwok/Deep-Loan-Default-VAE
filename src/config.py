@@ -25,19 +25,19 @@ ANOMALY_LABEL   = "Charged Off"
 
 # ── Features available at application time (no data leakage) ──────────────────
 APPLICATION_FEATURES = [
-    "loan_amnt", "funded_amnt", "term", "int_rate", "installment",
-    "grade", "sub_grade", "emp_length", "home_ownership",
-    "annual_inc", "verification_status", "purpose", "addr_state",
-    "dti", "delinq_2yrs", "fico_range_low", "fico_range_high",
-    "inq_last_6mths", "open_acc", "pub_rec", "revol_bal",
-    "revol_util", "total_acc", "initial_list_status", "application_type",
+    "int_rate",
+    "dti",
+    "fico_range_low",
+    "annual_inc",
+    "loan_amnt",
+    "revol_util"
 ]
 
 # ── VAE Hyperparameters ────────────────────────────────────
-LATENT_DIM      = 3
-ENCODER_DIMS    = [32, 16]   # hidden layer sizes (encoder)
-DECODER_DIMS    = [16, 32]   # mirror of encoder
-BETA            = 0.0
+LATENT_DIM      = 2
+ENCODER_DIMS    = [4]
+DECODER_DIMS    = [4]
+BETA            = 0.001
 LEARNING_RATE   = 5e-4
 BATCH_SIZE      = 2048
 NUM_EPOCHS      = 300
