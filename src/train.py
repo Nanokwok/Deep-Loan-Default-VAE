@@ -115,9 +115,9 @@ def load_data(
     """
     proc = Path(proc_dir)
 
-    train_arr  = np.load(proc / "train_features.npy").astype(np.float32)
-    val_arr    = np.load(proc / "val_features.npy").astype(np.float32)
-    val_labels = np.load(proc / "val_labels.npy")
+    train_arr  = np.load(proc / "X_train.npy").astype(np.float32)
+    val_arr    = np.load(proc / "X_val.npy").astype(np.float32)
+    val_labels = np.load(proc / "y_val.npy")
     val_normal = val_arr[val_labels == 0]
 
     log.info(
@@ -243,9 +243,9 @@ def _plot_reconstruction(
     """
     proc = Path(proc_dir)
     val_t   = torch.from_numpy(
-        np.load(proc / "val_features.npy").astype(np.float32)
+        np.load(proc / "X_val.npy").astype(np.float32)
     ).to(device)
-    val_lbl = np.load(proc / "val_labels.npy")
+    val_lbl = np.load(proc / "y_val.npy")
 
     model.eval()
     with torch.no_grad():
