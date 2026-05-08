@@ -37,10 +37,10 @@ APPLICATION_FEATURES = [
 LATENT_DIM      = 32
 ENCODER_DIMS    = [128,64,32]   # hidden layer sizes (encoder)
 DECODER_DIMS    = [16, 32, 48]   # mirror of encoder
-BETA            = 0.05
+BETA            = 0.005
 LEARNING_RATE   = 5e-4
-BATCH_SIZE      = 512
-NUM_EPOCHS      = 100
+BATCH_SIZE      = 2048
+NUM_EPOCHS      = 300
 RANDOM_SEED     = 42
 
 # ── Phase 4 Design Warnings ───────────────────────────────────────────────────
