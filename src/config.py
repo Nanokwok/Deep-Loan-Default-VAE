@@ -33,14 +33,14 @@ APPLICATION_FEATURES = [
     "revol_util", "total_acc", "initial_list_status", "application_type",
 ]
 
-# ── VAE Hyperparameters (tuned in Phase 4) ────────────────────────────────────
+# ── VAE Hyperparameters ────────────────────────────────────
 LATENT_DIM      = 16
 ENCODER_DIMS    = [48, 32, 16]   # hidden layer sizes (encoder)
 DECODER_DIMS    = [16, 32, 48]   # mirror of encoder
-BETA            = 0.1
+BETA            = 0.01
 LEARNING_RATE   = 1e-3
 BATCH_SIZE      = 512
-NUM_EPOCHS      = 50
+NUM_EPOCHS      = 100
 RANDOM_SEED     = 42
 
 # ── Phase 4 Design Warnings ───────────────────────────────────────────────────
