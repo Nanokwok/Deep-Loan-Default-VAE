@@ -31,19 +31,23 @@ NUM_EPOCHS      = 200
 RANDOM_SEED     = 42
 
 # ── Early stopping & LR scheduler ────────────────────────────────
+# PATIENCE     : stop if Val AUPRC does not improve for this many epochs.
+#                Rule of thumb: ~10% of NUM_EPOCHS.  200 epochs → 20.
+# LR_PATIENCE  : halve LR after this many non-improving epochs.
+#                Should fire before early stopping: ~PATIENCE // 2.
 PATIENCE        = 20
 LR_PATIENCE     = 7
 
-# ── KL Annealing ─────────────────────────────────────────────────
-KL_ANNEAL_EPOCHS: int = 50
-
-# ── Denoising ─────────────────────────────────────────────────────
-NOISE_STD: float = 0.02
-
 # ── Activation function ───────────────────────────────────────────
+# LeakyReLU prevents dying neurons on the many negative values in V1-V28.
+# negative_slope=0.01 lets a small gradient flow for x < 0.
 LEAKY_RELU_SLOPE: float = 0.01
 
 # ── Feature-wise reconstruction weights ──────────────────────────
+# Derived from EDA: |mean_fraud − mean_normal| on the val set.
+# Higher weight → loss spikes harder when this feature deviates.
+# Features not listed default to 1.0.
+# Scale guide:  |Δμ| > 6 → 3.0 | |Δμ| 4-6 → 2.0 | |Δμ| 2-4 → 1.5
 FEATURE_WEIGHTS: dict[str, float] = {
     "V3":  3.0,   # |Δμ| = 7.05  — strongest fraud signal
     "V14": 3.0,   # |Δμ| = 6.98

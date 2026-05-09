@@ -20,8 +20,8 @@ TARGET_COL      = "Class"   # 0 = Normal, 1 = Fraud
 # ── Model Architecture ────────────────────────────────────
 INPUT_DIM       = 30
 LATENT_DIM      = 4
-ENCODER_DIMS    = [32, 16]
-DECODER_DIMS    = [16, 32]
+ENCODER_DIMS    = [20, 12]
+DECODER_DIMS    = [12, 20]
 
 # ── VAE Hyperparameters ──────────────────────────────────────────
 BETA            = 0.005
@@ -31,28 +31,9 @@ NUM_EPOCHS      = 200
 RANDOM_SEED     = 42
 
 # ── Early stopping & LR scheduler ────────────────────────────────
+# PATIENCE     : stop if Val AUPRC does not improve for this many epochs.
+#                Rule of thumb: ~10% of NUM_EPOCHS.  200 epochs → 20.
+# LR_PATIENCE  : halve LR after this many non-improving epochs.
+#                Should fire before early stopping: ~PATIENCE // 2.
 PATIENCE        = 20
 LR_PATIENCE     = 7
-
-# ── KL Annealing ─────────────────────────────────────────────────
-KL_ANNEAL_EPOCHS: int = 50
-
-# ── Denoising ─────────────────────────────────────────────────────
-NOISE_STD: float = 0.02
-
-# ── Activation function ───────────────────────────────────────────
-LEAKY_RELU_SLOPE: float = 0.01
-
-# ── Feature-wise reconstruction weights ──────────────────────────
-FEATURE_WEIGHTS: dict[str, float] = {
-    "V3":  3.0,   # |Δμ| = 7.05  — strongest fraud signal
-    "V14": 3.0,   # |Δμ| = 6.98
-    "V17": 3.0,   # |Δμ| = 6.68
-    "V12": 2.5,   # |Δμ| = 6.28
-    "V10": 2.5,   # |Δμ| = 5.68
-    "V7":  2.0,   # |Δμ| = 5.57
-    "V11": 2.0,   # |Δμ| = 3.80
-    "V4":  2.0,   # |Δμ| = 4.54
-    "V16": 2.0,   # |Δμ| = 4.14
-    "V1":  1.5,   # |Δμ| = 4.77
-}
