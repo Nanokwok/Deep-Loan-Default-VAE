@@ -46,11 +46,13 @@ LR_PATIENCE     = 7
 KL_ANNEAL_EPOCHS: int = 50
 
 # ── Denoising ─────────────────────────────────────────────────────
-# Gaussian noise std added to input during training only.
-# The encoder receives x + ε but the reconstruction target remains clean x.
-# Forces the model to learn underlying structure rather than memorising inputs.
-# Typical range: 0.02–0.10.  0.05 ≈ 5% of a unit-std feature.
-NOISE_STD: float = 0.05
+# Feature-specific Gaussian noise added to input during training only.
+# The per-feature sigma is NOISE_STD / (w_i / mean(w)), so high-weight
+# (discriminative) features receive LESS noise — their fraud signal is
+# preserved — while low-weight features receive MORE noise, forcing the
+# model to learn their underlying structure rather than memorise them.
+# Base std of 0.02 ≈ 2% of a unit-std feature (down from 0.05).
+NOISE_STD: float = 0.02
 
 # ── Activation function ───────────────────────────────────────────
 # LeakyReLU prevents dying neurons on the many negative values in V1-V28.

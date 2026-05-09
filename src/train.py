@@ -88,6 +88,35 @@ def _build_feature_weights(device: torch.device) -> torch.Tensor:
     return weights.to(device)
 
 
+def _build_noise_sigma(
+    feature_weights: torch.Tensor,
+    base_std: float,
+) -> torch.Tensor | None:
+    """
+    Per-feature noise std, inversely proportional to reconstruction weight.
+
+    Formula:  σ_d = base_std / (w_d / mean(w))
+
+    High-weight features (large w_d, strong fraud signal) → small σ_d.
+      → Their discriminative structure is preserved during training.
+    Low-weight features (w_d ≈ 1.0) → σ_d ≈ base_std.
+      → Model is forced to learn their underlying structure.
+
+    Mean noise across features ≈ base_std (conservation property).
+    Returns None when base_std == 0 (denoising disabled).
+    """
+    if base_std == 0.0:
+        return None
+    w_norm   = feature_weights / feature_weights.mean()   # normalise weights
+    sigma    = base_std / w_norm                          # invert: high-w → low σ
+    log.info(
+        "Noise sigma  base_std=%.3f  min_sigma=%.4f (high-weight feats)  "
+        "max_sigma=%.4f (low-weight feats)",
+        base_std, sigma.min().item(), sigma.max().item(),
+    )
+    return sigma
+
+
 # ── Device ────────────────────────────────────────────────────────────────────
 
 def get_device() -> torch.device:
@@ -163,14 +192,15 @@ def _train_epoch(
     device:          torch.device,
     beta:            float = BETA,
     feature_weights: torch.Tensor | None = None,
+    noise_sigma:     torch.Tensor | None = None,
 ) -> float:
     """
     One gradient-update pass over the training set.
 
-    Denoising VAE: if NOISE_STD > 0, Gaussian noise is added to x before
-    encoding.  The reconstruction target remains the original clean x.
-    This forces the model to learn the true underlying structure of normal
-    transactions rather than memorising individual samples.
+    Denoising VAE: if noise_sigma is not None, feature-specific Gaussian
+    noise is added to x before encoding.  High-weight (discriminative)
+    features receive less noise; low-weight features receive more.
+    The reconstruction target always remains the original clean x.
 
     Returns mean total loss over the epoch.
     """
@@ -180,14 +210,15 @@ def _train_epoch(
     for (x,) in loader:
         x = x.to(device, non_blocking=True)
 
-        # ── Denoising: corrupt input, reconstruct clean ────────────────────
-        if NOISE_STD > 0.0:
-            x_in = x + torch.randn_like(x) * NOISE_STD
+        # ── Feature-specific denoising: corrupt input, reconstruct clean ───
+        if noise_sigma is not None:
+            # noise_sigma: (INPUT_DIM,) — broadcast over batch
+            x_in = x + torch.randn_like(x) * noise_sigma.unsqueeze(0)
         else:
             x_in = x
 
         optimizer.zero_grad()
-        x_hat, mu, log_var = model(x_in)           # encode noisy
+        x_hat, mu, log_var = model(x_in)               # encode noisy
         loss, _, _ = vae_loss(x, x_hat, mu, log_var,   # target = clean x
                               beta=beta, feature_weights=feature_weights)
         loss.backward()
@@ -371,6 +402,7 @@ def train() -> Path:
     )
 
     feature_weights = _build_feature_weights(device)
+    noise_sigma     = _build_noise_sigma(feature_weights, NOISE_STD)
 
     # ── CSV history ───────────────────────────────────────────────────────────
     log_csv  = exp_dir / "loss_history.csv"
@@ -397,7 +429,9 @@ def train() -> Path:
             # hasn't learned meaningful structure yet.
             annealed_beta           = min(BETA, BETA * epoch / KL_ANNEAL_EPOCHS)
             train_loss              = _train_epoch(model, train_loader, optimizer, device,
-                                                  beta=annealed_beta, feature_weights=feature_weights)
+                                                  beta=annealed_beta,
+                                                  feature_weights=feature_weights,
+                                                  noise_sigma=noise_sigma)
             val_loss, auroc, auprc  = _val_epoch(model, X_val_tensor, y_val, device,
                                                  feature_weights=feature_weights)
             current_lr              = optimizer.param_groups[0]["lr"]
