@@ -1,10 +1,26 @@
 """
-β-VAE for semi-supervised anomaly detection on tabular loan data.
+β-VAE for semi-supervised anomaly detection on tabular credit-card fraud data.
 
-Architecture  (input_dim = 53):
-  Encoder : 53 → 48 → 32 → 16  →  μ (16)  &  log σ² (16)
-  Latent  :                    z = μ + ε · σ   (reparameterisation trick)
-  Decoder : 16 → 16 → 32 → 48 → 53
+Architecture  (input_dim = 30):
+  Encoder : 30 → ENCODER_DIMS → μ (LATENT_DIM)  &  log σ² (LATENT_DIM)
+  Latent  :                   z = μ + ε · σ   (reparameterisation trick)
+  Decoder : LATENT_DIM → DECODER_DIMS → 30
+
+Activation — LeakyReLU(negative_slope=LEAKY_RELU_SLOPE):
+  V1-V28 are PCA-transformed and contain many negative values.
+  ReLU kills gradients on those inputs ("dying ReLU").
+  LeakyReLU passes a small gradient (slope × x) when x < 0, keeping
+  all neurons alive throughout training.
+
+Loss — weighted β-ELBO:
+  recon_loss = (1/N) · Σ_i  Σ_d  w_d · (x_id − x̂_id)²
+  kl_loss    = (1/N) · Σ_i  −½ Σ_d (1 + log σ²_id − μ²_id − σ²_id)
+  total_loss = recon_loss + β · kl_loss
+
+  w_d (feature weight) is ≥ 1.0 for all features, and elevated for
+  features with high |mean_fraud − mean_normal| (V3, V14, V17, …).
+  This focuses reconstruction pressure on the features most likely to
+  spike when a fraudulent transaction passes through the normal-trained decoder.
 """
 
 from __future__ import annotations
@@ -15,7 +31,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from src.config import BETA, DECODER_DIMS, ENCODER_DIMS, LATENT_DIM
+from src.config import BETA, DECODER_DIMS, ENCODER_DIMS, LATENT_DIM, LEAKY_RELU_SLOPE
 
 
 class BetaVAE(nn.Module):
@@ -45,8 +61,8 @@ class BetaVAE(nn.Module):
         for out_size in ENCODER_DIMS:
             layers += [
                 nn.Linear(in_size, out_size),
-                nn.BatchNorm1d(out_size),   # stabilises training on tabular data
-                nn.ReLU(),
+                nn.BatchNorm1d(out_size),
+                nn.LeakyReLU(negative_slope=LEAKY_RELU_SLOPE),
                 nn.Dropout(p=dropout_rate),
             ]
             in_size = out_size
@@ -65,7 +81,7 @@ class BetaVAE(nn.Module):
             layers += [
                 nn.Linear(in_size, out_size),
                 nn.BatchNorm1d(out_size),
-                nn.ReLU(),
+                nn.LeakyReLU(negative_slope=LEAKY_RELU_SLOPE),
                 nn.Dropout(p=dropout_rate),
             ]
             in_size = out_size
@@ -127,29 +143,41 @@ class BetaVAE(nn.Module):
 # ── Loss function ──────────────────────────────────────────────────────────────
 
 def vae_loss(
-    x:       torch.Tensor,
-    x_hat:   torch.Tensor,
-    mu:      torch.Tensor,
-    log_var: torch.Tensor,
-    beta:    float = BETA,
+    x:               torch.Tensor,
+    x_hat:           torch.Tensor,
+    mu:              torch.Tensor,
+    log_var:         torch.Tensor,
+    beta:            float = BETA,
+    feature_weights: torch.Tensor | None = None,
 ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """
-    β-ELBO loss.
+    Weighted β-ELBO loss.
 
     Args:
-        x        : original input           (batch, input_dim)
-        x_hat    : reconstructed input      (batch, input_dim)
-        mu       : latent mean              (batch, latent_dim)
-        log_var  : latent log-variance      (batch, latent_dim)
-        beta     : KL weight (default from config)
+        x               : original input           (batch, input_dim)
+        x_hat           : reconstructed input      (batch, input_dim)
+        mu              : latent mean              (batch, latent_dim)
+        log_var         : latent log-variance      (batch, latent_dim)
+        beta            : KL weight (default from config)
+        feature_weights : per-feature weight vector (input_dim,) or None.
+                          When provided, reconstruction loss becomes:
+                            (1/N) · Σ_i Σ_d  w_d · (x_id − x̂_id)²
+                          High-discriminability features (e.g. V14, V17, V3)
+                          get w_d > 1 so errors on those dimensions drive a
+                          larger anomaly score spike for fraudulent inputs.
+                          When None, falls back to uniform MSE.
 
     Returns:
         total_loss : scalar for .backward()
-        recon_loss : scalar for logging (reconstruction component)
-        kl_loss    : scalar for logging (KL component, before β scaling)
+        recon_loss : scalar for logging
+        kl_loss    : scalar for logging (before β scaling)
     """
-    # ── Reconstruction loss ────────────────────────────────────────────────────
-    recon_loss = F.mse_loss(x_hat, x, reduction="sum") / x.size(0)
+    # ── Reconstruction loss (optionally feature-weighted) ──────────────────────
+    sq_err = (x_hat - x) ** 2                          # (batch, input_dim)
+    if feature_weights is not None:
+        # broadcast (input_dim,) → (1, input_dim) over the batch
+        sq_err = sq_err * feature_weights.unsqueeze(0)
+    recon_loss = sq_err.sum(dim=1).mean()              # sum over D, mean over N
 
     # ── KL Divergence ──────────────────────────────────────────────────────────
     log_var_clamped = log_var.clamp(-4, 15)

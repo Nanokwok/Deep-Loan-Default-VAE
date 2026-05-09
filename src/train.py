@@ -33,6 +33,7 @@ from src.config import (
     BETA,
     DATA_PROC_DIR,
     EXPERIMENTS_DIR,
+    FEATURE_WEIGHTS,
     INPUT_DIM,
     LATENT_DIM,
     LEARNING_RATE,
@@ -58,6 +59,30 @@ CANONICAL_CKPT = MODELS_DIR / "best_vae.pth"
 # PATIENCE     → early stopping on Val AUPRC (imported as PATIENCE)
 # LR_PATIENCE  → ReduceLROnPlateau patience  (imported as LR_PATIENCE)
 KL_ANNEAL_EPOCHS: int = 10   # ramp β from 0 → BETA over first N epochs
+
+# Column order must match FEATURE_COLS in preprocess.py
+_FEATURE_COLS: list[str] = ["Time"] + [f"V{i}" for i in range(1, 29)] + ["Amount"]
+
+
+def _build_feature_weights(device: torch.device) -> torch.Tensor:
+    """
+    Build a (INPUT_DIM,) float32 weight tensor from FEATURE_WEIGHTS config.
+    Features absent from the dict default to 1.0.
+    Constructed once before training and moved to device.
+    """
+    weights = torch.ones(INPUT_DIM, dtype=torch.float32)
+    for feat, w in FEATURE_WEIGHTS.items():
+        if feat in _FEATURE_COLS:
+            weights[_FEATURE_COLS.index(feat)] = w
+        else:
+            log.warning("FEATURE_WEIGHTS key '%s' not in feature columns — ignored", feat)
+    log.info(
+        "Feature weights  non-unit=%d  max=%.1f  weighted_features=%s",
+        int((weights != 1.0).sum()),
+        weights.max().item(),
+        [f for f, w in FEATURE_WEIGHTS.items() if f in _FEATURE_COLS],
+    )
+    return weights.to(device)
 
 
 # ── Device ────────────────────────────────────────────────────────────────────
@@ -129,11 +154,12 @@ def load_data(proc_dir: str | Path) -> tuple[DataLoader, torch.Tensor, np.ndarra
 # ── Training epoch ────────────────────────────────────────────────────────────
 
 def _train_epoch(
-    model:     BetaVAE,
-    loader:    DataLoader,
-    optimizer: optim.Optimizer,
-    device:    torch.device,
-    beta:      float = BETA,
+    model:           BetaVAE,
+    loader:          DataLoader,
+    optimizer:       optim.Optimizer,
+    device:          torch.device,
+    beta:            float = BETA,
+    feature_weights: torch.Tensor | None = None,
 ) -> float:
     """One gradient-update pass over the training set. Returns mean total loss."""
     model.train()
@@ -143,7 +169,8 @@ def _train_epoch(
         x = x.to(device, non_blocking=True)
         optimizer.zero_grad()
         x_hat, mu, log_var = model(x)
-        loss, _, _ = vae_loss(x, x_hat, mu, log_var, beta=beta)
+        loss, _, _ = vae_loss(x, x_hat, mu, log_var, beta=beta,
+                              feature_weights=feature_weights)
         loss.backward()
         torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
         optimizer.step()
@@ -155,34 +182,36 @@ def _train_epoch(
 # ── Validation epoch ──────────────────────────────────────────────────────────
 
 def _val_epoch(
-    model:        BetaVAE,
-    X_val_tensor: torch.Tensor,
-    y_val:        np.ndarray,
-    device:       torch.device,
+    model:           BetaVAE,
+    X_val_tensor:    torch.Tensor,
+    y_val:           np.ndarray,
+    device:          torch.device,
+    feature_weights: torch.Tensor | None = None,
 ) -> tuple[float, float, float]:
     """
     Full-val pass in eval mode.
 
     Returns:
-        val_loss  — mean β-ELBO loss over normal+fraud samples
+        val_loss  — weighted β-ELBO loss over normal+fraud samples
         auroc     — roc_auc_score(y_val, anomaly_scores)
         auprc     — average_precision_score(y_val, anomaly_scores)
 
-    Anomaly score = per-sample mean squared reconstruction error.
-    Higher score → more anomalous → predicted fraud.
-    Computed in eval mode so reparameterise() returns μ (deterministic).
+    Anomaly score = per-sample weighted reconstruction error (same weights as
+    training loss), so the score directly reflects the loss landscape.
     """
     model.eval()
     with torch.no_grad():
         X_val = X_val_tensor.to(device)
         x_hat, mu, log_var = model(X_val)
 
-        # β-ELBO on full val set (monitoring purposes only — not used for ES)
-        loss, _, _ = vae_loss(X_val, x_hat, mu, log_var)
+        loss, _, _ = vae_loss(X_val, x_hat, mu, log_var,
+                              feature_weights=feature_weights)
 
-        # Per-sample reconstruction error — the anomaly score
-        # Shape: (N,) — mean over INPUT_DIM features per sample
-        anomaly_scores = ((X_val - x_hat) ** 2).mean(dim=1).cpu().numpy()
+        # Weighted per-sample anomaly score — mirrors the training objective
+        sq_err = (X_val - x_hat) ** 2
+        if feature_weights is not None:
+            sq_err = sq_err * feature_weights.unsqueeze(0)
+        anomaly_scores = sq_err.mean(dim=1).cpu().numpy()
 
     auroc = float(roc_auc_score(y_val, anomaly_scores))
     auprc = float(average_precision_score(y_val, anomaly_scores))
@@ -241,18 +270,22 @@ def _plot_training_curves(exp_dir: Path, log_csv: Path) -> None:
 
 
 def _plot_anomaly_scores(
-    exp_dir:      Path,
-    model:        BetaVAE,
-    X_val_tensor: torch.Tensor,
-    y_val:        np.ndarray,
-    device:       torch.device,
+    exp_dir:         Path,
+    model:           BetaVAE,
+    X_val_tensor:    torch.Tensor,
+    y_val:           np.ndarray,
+    device:          torch.device,
+    feature_weights: torch.Tensor | None = None,
 ) -> None:
-    """Reconstruction error histogram (Normal vs Fraud) saved to exp_dir/anomaly_scores.png."""
+    """Weighted reconstruction error histogram (Normal vs Fraud) saved to exp_dir/anomaly_scores.png."""
     model.eval()
     with torch.no_grad():
         X_val  = X_val_tensor.to(device)
         x_hat, _, _ = model(X_val)
-        scores = ((X_val - x_hat) ** 2).mean(dim=1).cpu().numpy()
+        sq_err = (X_val - x_hat) ** 2
+        if feature_weights is not None:
+            sq_err = sq_err * feature_weights.unsqueeze(0)
+        scores = sq_err.mean(dim=1).cpu().numpy()
 
     normal_s = scores[y_val == 0]
     fraud_s  = scores[y_val == 1]
@@ -318,6 +351,8 @@ def train() -> Path:
         INPUT_DIM, LATENT_DIM, BETA, KL_ANNEAL_EPOCHS, n_params,
     )
 
+    feature_weights = _build_feature_weights(device)
+
     # ── CSV history ───────────────────────────────────────────────────────────
     log_csv  = exp_dir / "loss_history.csv"
     csv_file = open(log_csv, "w", newline="")
@@ -339,8 +374,10 @@ def train() -> Path:
             # Prevents posterior collapse early in training when the encoder
             # hasn't learned meaningful structure yet.
             annealed_beta           = min(BETA, BETA * epoch / KL_ANNEAL_EPOCHS)
-            train_loss              = _train_epoch(model, train_loader, optimizer, device, beta=annealed_beta)
-            val_loss, auroc, auprc  = _val_epoch(model, X_val_tensor, y_val, device)
+            train_loss              = _train_epoch(model, train_loader, optimizer, device,
+                                                  beta=annealed_beta, feature_weights=feature_weights)
+            val_loss, auroc, auprc  = _val_epoch(model, X_val_tensor, y_val, device,
+                                                 feature_weights=feature_weights)
             current_lr              = optimizer.param_groups[0]["lr"]
             scheduler.step(auprc)
 
@@ -394,7 +431,8 @@ def train() -> Path:
     # Reload best checkpoint so plots use the best weights, not last epoch
     best_ckpt = torch.load(exp_ckpt, map_location=device, weights_only=True)
     model.load_state_dict(best_ckpt["model_state"])
-    _plot_anomaly_scores(exp_dir, model, X_val_tensor, y_val, device)
+    _plot_anomaly_scores(exp_dir, model, X_val_tensor, y_val, device,
+                        feature_weights=feature_weights)
 
     log.info("=" * 65)
     log.info("Done.  best_val_auprc=%.4f  exp=%s", best_auprc, exp_dir.name)
