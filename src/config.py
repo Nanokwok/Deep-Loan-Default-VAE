@@ -12,12 +12,6 @@ DATA_PROC_DIR   = os.path.join(ROOT_DIR, "data", "processed")
 REPORTS_DIR     = os.path.join(ROOT_DIR, "reports")
 FIGURES_DIR     = os.path.join(REPORTS_DIR, "figures")
 EXPERIMENTS_DIR = os.path.join(ROOT_DIR, "experiments")
-# ── To persist exp_01/, exp_02/, ... to Google Drive in Colab: ────────────────
-#   from google.colab import drive
-#   drive.mount('/content/drive')
-#   import src.config as cfg
-#   cfg.EXPERIMENTS_DIR = "/content/drive/MyDrive/Fraud_VAE_Project"
-
 RAW_CSV         = os.path.join(DATA_RAW_DIR, "creditcard.csv")
 
 # ── Target column & labels ─────────────────────────────────────────────────────
@@ -35,4 +29,3 @@ LEARNING_RATE   = 1e-3
 BATCH_SIZE      = 256
 NUM_EPOCHS      = 100
 RANDOM_SEED     = 42
-

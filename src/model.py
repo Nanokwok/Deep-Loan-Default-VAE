@@ -5,30 +5,6 @@ Architecture  (input_dim = 53):
   Encoder : 53 → 48 → 32 → 16  →  μ (16)  &  log σ² (16)
   Latent  :                    z = μ + ε · σ   (reparameterisation trick)
   Decoder : 16 → 16 → 32 → 48 → 53
-
-Loss — β-ELBO:
-  L = MSE_recon  +  β · KL(q(z|x) ∥ N(0,I))
-
-  Reconstruction term (MSE):
-      Summed over all input dimensions per sample, averaged over the batch.
-      Using 'sum per sample' keeps the loss magnitude proportional to input_dim
-      (as opposed to F.mse_loss reduction='mean' which divides by N×D and
-      inadvertently rescales the KL term by 1/D).
-
-  KL Divergence (closed-form Gaussian):
-      KL = -½ · Σ_d (1 + log σ²_d - μ²_d - σ²_d)
-      Summed over latent dims, averaged over batch — same normalisation as recon.
-
-  β weighting:
-      β = 1.0  →  standard VAE; full KL pressure toward N(0,I).
-      β < 1.0  →  relaxed prior; encoder retains more discriminative structure.
-      β > 1.0  →  β-VAE disentanglement (not appropriate here).
-
-      For tabular credit data the config default is β = 0.1.
-      Strong KL pressure collapses grade / income clusters that the encoder
-      needs to distinguish normal loans from anomalous ones.
-      If after training the reconstruction-error distributions of Fully Paid
-      and Charged Off rows heavily overlap → lower β further.
 """
 
 from __future__ import annotations
@@ -171,30 +147,11 @@ def vae_loss(
         total_loss : scalar for .backward()
         recon_loss : scalar for logging (reconstruction component)
         kl_loss    : scalar for logging (KL component, before β scaling)
-
-    Loss formulation:
-        recon_loss = (1/N) · Σ_i  ‖x_i − x̂_i‖²          (sum over D, mean over N)
-        kl_loss    = (1/N) · Σ_i  −½ Σ_d (1 + log σ²_id − μ²_id − σ²_id)
-        total_loss = recon_loss + β · kl_loss
-
-    Note on normalisation:
-        Both terms use 'sum over dims, mean over batch'.
-        This ensures the β scale remains consistent regardless of input_dim
-        or latent_dim — β = 0.1 means the KL contributes 10 % of the loss
-        in expectation at the start of training when recon ≈ KL.
     """
     # ── Reconstruction loss ────────────────────────────────────────────────────
-    # F.mse_loss with reduction='sum' gives Σ_i Σ_d (x_id - x̂_id)²
-    # Dividing by batch size N gives per-sample average (sum over dims).
     recon_loss = F.mse_loss(x_hat, x, reduction="sum") / x.size(0)
 
     # ── KL Divergence ──────────────────────────────────────────────────────────
-    # Closed-form KL between diagonal Gaussian q(z|x) and standard prior p(z):
-    #   KL = -½ Σ_d (1 + log σ²_d - μ²_d - exp(log σ²_d))
-    # torch.sum(…, dim=1) → sum over latent dims per sample  (batch,)
-    # .mean()              → average over the batch            scalar
-    # Clamp log_var to prevent exp() overflow (numerical stability).
-    # [-4, 15] keeps σ in [~0.02, ~3000] — well beyond any legitimate range.
     log_var_clamped = log_var.clamp(-4, 15)
     kl_loss = -0.5 * torch.sum(
         1.0 + log_var_clamped - mu.pow(2) - log_var_clamped.exp(),
@@ -202,8 +159,6 @@ def vae_loss(
     ).mean()
 
     # ── β-weighted total ───────────────────────────────────────────────────────
-    # β < 1 relaxes the Gaussian prior constraint.
-    # Logged separately so we can track each component across epochs.
     total_loss = recon_loss + beta * kl_loss
 
     return total_loss, recon_loss, kl_loss
