@@ -35,9 +35,11 @@ from src.config import (
     EXPERIMENTS_DIR,
     FEATURE_WEIGHTS,
     INPUT_DIM,
+    KL_ANNEAL_EPOCHS,
     LATENT_DIM,
     LEARNING_RATE,
     LR_PATIENCE,
+    NOISE_STD,
     NUM_EPOCHS,
     PATIENCE,
     RANDOM_SEED,
@@ -55,10 +57,11 @@ _ROOT          = Path(__file__).resolve().parents[1]
 MODELS_DIR     = _ROOT / "models"
 CANONICAL_CKPT = MODELS_DIR / "best_vae.pth"
 
-# Patience values come from src/config.py — edit them there, not here.
-# PATIENCE     → early stopping on Val AUPRC (imported as PATIENCE)
-# LR_PATIENCE  → ReduceLROnPlateau patience  (imported as LR_PATIENCE)
-KL_ANNEAL_EPOCHS: int = 10   # ramp β from 0 → BETA over first N epochs
+# All tunable constants come from src/config.py — edit them there, not here.
+# PATIENCE         → early stopping on Val AUPRC
+# LR_PATIENCE      → ReduceLROnPlateau patience
+# KL_ANNEAL_EPOCHS → β warm-up length (epochs 1 → KL_ANNEAL_EPOCHS)
+# NOISE_STD        → denoising Gaussian σ (0 = disabled)
 
 # Column order must match FEATURE_COLS in preprocess.py
 _FEATURE_COLS: list[str] = ["Time"] + [f"V{i}" for i in range(1, 29)] + ["Amount"]
@@ -161,16 +164,32 @@ def _train_epoch(
     beta:            float = BETA,
     feature_weights: torch.Tensor | None = None,
 ) -> float:
-    """One gradient-update pass over the training set. Returns mean total loss."""
+    """
+    One gradient-update pass over the training set.
+
+    Denoising VAE: if NOISE_STD > 0, Gaussian noise is added to x before
+    encoding.  The reconstruction target remains the original clean x.
+    This forces the model to learn the true underlying structure of normal
+    transactions rather than memorising individual samples.
+
+    Returns mean total loss over the epoch.
+    """
     model.train()
     total_loss = 0.0
 
     for (x,) in loader:
         x = x.to(device, non_blocking=True)
+
+        # ── Denoising: corrupt input, reconstruct clean ────────────────────
+        if NOISE_STD > 0.0:
+            x_in = x + torch.randn_like(x) * NOISE_STD
+        else:
+            x_in = x
+
         optimizer.zero_grad()
-        x_hat, mu, log_var = model(x)
-        loss, _, _ = vae_loss(x, x_hat, mu, log_var, beta=beta,
-                              feature_weights=feature_weights)
+        x_hat, mu, log_var = model(x_in)           # encode noisy
+        loss, _, _ = vae_loss(x, x_hat, mu, log_var,   # target = clean x
+                              beta=beta, feature_weights=feature_weights)
         loss.backward()
         torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
         optimizer.step()
@@ -364,8 +383,11 @@ def train() -> Path:
     patience_counter  = 0
 
     log.info("=" * 65)
-    log.info("Training  epochs=%d  patience=%d  lr_patience=%d  metric=AUPRC",
-             NUM_EPOCHS, PATIENCE, LR_PATIENCE)
+    log.info(
+        "Training  epochs=%d  patience=%d  lr_patience=%d  "
+        "kl_anneal=%dep  noise_std=%.3f  metric=AUPRC",
+        NUM_EPOCHS, PATIENCE, LR_PATIENCE, KL_ANNEAL_EPOCHS, NOISE_STD,
+    )
     log.info("=" * 65)
 
     try:

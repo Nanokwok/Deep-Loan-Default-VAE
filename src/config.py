@@ -38,6 +38,20 @@ RANDOM_SEED     = 42
 PATIENCE        = 20
 LR_PATIENCE     = 7
 
+# ── KL Annealing ─────────────────────────────────────────────────
+# β ramps linearly from 0 → BETA over the first KL_ANNEAL_EPOCHS epochs.
+# This lets the VAE focus on reconstruction quality first, then gradually
+# tighten the latent space. 50 epochs gives a slow, stable warm-up for
+# NUM_EPOCHS=200.
+KL_ANNEAL_EPOCHS: int = 50
+
+# ── Denoising ─────────────────────────────────────────────────────
+# Gaussian noise std added to input during training only.
+# The encoder receives x + ε but the reconstruction target remains clean x.
+# Forces the model to learn underlying structure rather than memorising inputs.
+# Typical range: 0.02–0.10.  0.05 ≈ 5% of a unit-std feature.
+NOISE_STD: float = 0.05
+
 # ── Activation function ───────────────────────────────────────────
 # LeakyReLU prevents dying neurons on the many negative values in V1-V28.
 # negative_slope=0.01 lets a small gradient flow for x < 0.
