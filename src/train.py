@@ -19,6 +19,9 @@ import logging
 import shutil
 from pathlib import Path
 
+import matplotlib
+matplotlib.use("Agg")   # non-interactive — works on Colab & headless
+import matplotlib.pyplot as plt
 import numpy as np
 import torch
 import torch.optim as optim
@@ -51,6 +54,7 @@ CANONICAL_CKPT = MODELS_DIR / "best_vae.pth"
 
 EARLY_STOP_PATIENCE:   int = 10
 LR_SCHEDULER_PATIENCE: int = 5
+KL_ANNEAL_EPOCHS:      int = 10   # ramp β from 0 → BETA over first N epochs
 
 
 # ── Device ────────────────────────────────────────────────────────────────────
@@ -111,7 +115,7 @@ def load_data(proc_dir: str | Path) -> tuple[DataLoader, torch.Tensor, np.ndarra
         shuffle=True,
         generator=g,
         drop_last=True,
-        num_workers=2,
+        num_workers=0,      # 0 avoids Colab/multiprocessing deadlocks
         pin_memory=True,
     )
     X_val_tensor = torch.from_numpy(X_val)
@@ -126,6 +130,7 @@ def _train_epoch(
     loader:    DataLoader,
     optimizer: optim.Optimizer,
     device:    torch.device,
+    beta:      float = BETA,
 ) -> float:
     """One gradient-update pass over the training set. Returns mean total loss."""
     model.train()
@@ -135,8 +140,9 @@ def _train_epoch(
         x = x.to(device, non_blocking=True)
         optimizer.zero_grad()
         x_hat, mu, log_var = model(x)
-        loss, _, _ = vae_loss(x, x_hat, mu, log_var)
+        loss, _, _ = vae_loss(x, x_hat, mu, log_var, beta=beta)
         loss.backward()
+        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
         optimizer.step()
         total_loss += loss.item() * x.size(0)
 
@@ -181,6 +187,103 @@ def _val_epoch(
     return float(loss.item()), auroc, auprc
 
 
+# ── Post-training plots ───────────────────────────────────────────────────────
+
+def _plot_training_curves(exp_dir: Path, log_csv: Path) -> None:
+    """3-panel figure: Loss / AUROC / AUPRC saved to exp_dir/training_curves.png."""
+    rows: list[dict] = []
+    with open(log_csv) as f:
+        for row in csv.DictReader(f):
+            rows.append({k: float(v) for k, v in row.items()})
+    if not rows:
+        return
+
+    epochs   = [r["epoch"]    for r in rows]
+    best_ep  = max(rows, key=lambda r: r["val_auprc"])["epoch"]
+
+    fig, axes = plt.subplots(1, 3, figsize=(15, 4))
+
+    # Loss
+    ax = axes[0]
+    ax.plot(epochs, [r["train_loss"] for r in rows], color="steelblue", label="Train")
+    ax.plot(epochs, [r["val_loss"]   for r in rows], color="crimson", linestyle="--", label="Val")
+    ax.axvline(best_ep, color="orange", linewidth=1.2, linestyle=":", label=f"best ep {int(best_ep)}")
+    ax.set_xlabel("Epoch"); ax.set_title("β-ELBO Loss"); ax.legend(fontsize=8); ax.grid(alpha=0.3)
+
+    # AUROC
+    ax = axes[1]
+    ax.plot(epochs, [r["val_auroc"] for r in rows], color="steelblue", label="Val AUROC")
+    ax.axvline(best_ep, color="orange", linewidth=1.2, linestyle=":")
+    ax.set_xlabel("Epoch"); ax.set_title("Val AUROC"); ax.set_ylim(0, 1)
+    ax.legend(fontsize=8); ax.grid(alpha=0.3)
+
+    # AUPRC
+    ax = axes[2]
+    ax.plot(epochs, [r["val_auprc"] for r in rows], color="crimson", label="Val AUPRC")
+    ax.axvline(best_ep, color="orange", linewidth=1.2, linestyle=":", label=f"best ep {int(best_ep)}")
+    ax.set_xlabel("Epoch"); ax.set_title("Val AUPRC  (early-stopping metric)"); ax.set_ylim(0, 1)
+    ax.legend(fontsize=8); ax.grid(alpha=0.3)
+
+    best = max(rows, key=lambda r: r["val_auprc"])
+    plt.suptitle(
+        f"β-VAE Training  (β={BETA}  anneal={KL_ANNEAL_EPOCHS}ep  best_ep={int(best_ep)}"
+        f"  AUPRC={best['val_auprc']:.4f}  AUROC={best['val_auroc']:.4f})",
+        fontsize=11,
+    )
+    plt.tight_layout()
+    out = exp_dir / "training_curves.png"
+    plt.savefig(out, dpi=150, bbox_inches="tight")
+    plt.close()
+    log.info("Saved: %s", out)
+
+
+def _plot_anomaly_scores(
+    exp_dir:      Path,
+    model:        BetaVAE,
+    X_val_tensor: torch.Tensor,
+    y_val:        np.ndarray,
+    device:       torch.device,
+) -> None:
+    """Reconstruction error histogram (Normal vs Fraud) saved to exp_dir/anomaly_scores.png."""
+    model.eval()
+    with torch.no_grad():
+        X_val  = X_val_tensor.to(device)
+        x_hat, _, _ = model(X_val)
+        scores = ((X_val - x_hat) ** 2).mean(dim=1).cpu().numpy()
+
+    normal_s = scores[y_val == 0]
+    fraud_s  = scores[y_val == 1]
+    sep      = fraud_s.mean() / (normal_s.mean() + 1e-9)
+    auprc    = float(average_precision_score(y_val, scores))
+    auroc    = float(roc_auc_score(y_val, scores))
+
+    log.info(
+        "Anomaly scores  normal_mean=%.4f  fraud_mean=%.4f  sep=%.2f×  AUPRC=%.4f",
+        normal_s.mean(), fraud_s.mean(), sep, auprc,
+    )
+
+    clip = float(np.percentile(scores, 99))
+    bins = np.linspace(0, clip, 80)
+    fig, ax = plt.subplots(figsize=(10, 4))
+    ax.hist(normal_s.clip(max=clip), bins=bins, alpha=0.6, density=True,
+            color="steelblue", label=f"Normal  (n={len(normal_s):,})")
+    ax.hist(fraud_s.clip(max=clip),  bins=bins, alpha=0.6, density=True,
+            color="crimson",   label=f"Fraud   (n={len(fraud_s):,})")
+    ax.set_xlabel("Reconstruction Error (anomaly score)")
+    ax.set_ylabel("Density")
+    ax.set_title(
+        f"Anomaly Score Distribution — Val Set\n"
+        f"Separation={sep:.2f}×  |  AUROC={auroc:.4f}  |  AUPRC={auprc:.4f}"
+    )
+    ax.legend()
+    ax.grid(alpha=0.3)
+    plt.tight_layout()
+    out = exp_dir / "anomaly_scores.png"
+    plt.savefig(out, dpi=150, bbox_inches="tight")
+    plt.close()
+    log.info("Saved: %s", out)
+
+
 # ── Main training loop ────────────────────────────────────────────────────────
 
 def train() -> Path:
@@ -208,15 +311,15 @@ def train() -> Path:
     MODELS_DIR.mkdir(parents=True, exist_ok=True)
     n_params = sum(p.numel() for p in model.parameters())
     log.info(
-        "BetaVAE  input_dim=%d  latent_dim=%d  β=%.4f  params=%d",
-        INPUT_DIM, LATENT_DIM, BETA, n_params,
+        "BetaVAE  input_dim=%d  latent_dim=%d  β=%.4f  anneal_epochs=%d  params=%d",
+        INPUT_DIM, LATENT_DIM, BETA, KL_ANNEAL_EPOCHS, n_params,
     )
 
     # ── CSV history ───────────────────────────────────────────────────────────
     log_csv  = exp_dir / "loss_history.csv"
     csv_file = open(log_csv, "w", newline="")
     csv_writer = csv.writer(csv_file)
-    csv_writer.writerow(["epoch", "train_loss", "val_loss", "val_auroc", "val_auprc", "lr"])
+    csv_writer.writerow(["epoch", "train_loss", "val_loss", "val_auroc", "val_auprc", "lr", "beta"])
 
     exp_ckpt          = exp_dir / "best_model.pth"
     best_auprc        = -1.0
@@ -229,7 +332,11 @@ def train() -> Path:
 
     try:
         for epoch in range(1, NUM_EPOCHS + 1):
-            train_loss              = _train_epoch(model, train_loader, optimizer, device)
+            # KL annealing: linearly ramp β from 0 → BETA over KL_ANNEAL_EPOCHS
+            # Prevents posterior collapse early in training when the encoder
+            # hasn't learned meaningful structure yet.
+            annealed_beta           = min(BETA, BETA * epoch / KL_ANNEAL_EPOCHS)
+            train_loss              = _train_epoch(model, train_loader, optimizer, device, beta=annealed_beta)
             val_loss, auroc, auprc  = _val_epoch(model, X_val_tensor, y_val, device)
             current_lr              = optimizer.param_groups[0]["lr"]
             scheduler.step(auprc)
@@ -239,14 +346,15 @@ def train() -> Path:
                 f"Train Loss: {train_loss:.4f} | "
                 f"Val Loss: {val_loss:.4f} | "
                 f"Val AUROC: {auroc:.4f} | "
-                f"Val AUPRC: {auprc:.4f}"
+                f"Val AUPRC: {auprc:.4f} | "
+                f"β: {annealed_beta:.4f}"
             )
 
             csv_writer.writerow([
                 epoch,
                 f"{train_loss:.6f}", f"{val_loss:.6f}",
                 f"{auroc:.6f}",      f"{auprc:.6f}",
-                f"{current_lr:.2e}",
+                f"{current_lr:.2e}", f"{annealed_beta:.6f}",
             ])
             csv_file.flush()
 
@@ -276,8 +384,20 @@ def train() -> Path:
     finally:
         csv_file.close()
 
+    # ── Post-training plots ───────────────────────────────────────────────────
+    log.info("Generating plots...")
+    _plot_training_curves(exp_dir, log_csv)
+
+    # Reload best checkpoint so plots use the best weights, not last epoch
+    best_ckpt = torch.load(exp_ckpt, map_location=device, weights_only=True)
+    model.load_state_dict(best_ckpt["model_state"])
+    _plot_anomaly_scores(exp_dir, model, X_val_tensor, y_val, device)
+
     log.info("=" * 65)
     log.info("Done.  best_val_auprc=%.4f  exp=%s", best_auprc, exp_dir.name)
+    log.info("  Artefacts in %s:", exp_dir)
+    log.info("    config_backup.py  best_model.pth  loss_history.csv")
+    log.info("    training_curves.png  anomaly_scores.png")
     log.info("=" * 65)
 
     return exp_dir

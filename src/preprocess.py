@@ -6,10 +6,23 @@ Pipeline:
   2. Semi-supervised split:
        X_train — 80% of Class 0 (Normal) only
        X_val   — 20% of Class 0  +  100% of Class 1 (Fraud)
-  3. Scale features (fit on X_train only):
-       'Time'   → StandardScaler
-       'Amount' → RobustScaler   (heavy-tailed, outlier-robust)
-       V1–V28   → unchanged      (already PCA-transformed, ~N(0,1))
+  3. Two-stage scaling (fit on X_train only, no val leakage):
+
+       Stage 1 — RobustScaler on Time & Amount:
+         Removes the influence of extreme outliers (IQR-based centering).
+         Amount has a heavy right tail (max ~25k vs median ~22);
+         Time is monotonically increasing over 48 h, creating an outlier-like
+         structure for StandardScaler alone.
+
+       Stage 2 — StandardScaler on all 30 features:
+         Forces every column to μ≈0, σ≈1 — exactly the space the VAE decoder
+         is trained to reconstruct (MSE targets are ~N(0,1)).
+         V1–V28 are already PCA-normalised, so this stage is near-identity for
+         them but guarantees consistency and removes residual scale differences.
+
+       Net effect: Time & Amount: RobustScaler → StandardScaler
+                   V1–V28:                        StandardScaler
+
   4. Save to data/processed/
 
 Outputs:
@@ -18,7 +31,7 @@ Outputs:
   y_train.npy          (N_train,)    int8    — all zeros
   y_val.npy            (N_val,)      int8    — 0/1
   feature_columns.json — ordered list of 30 feature names
-  scaler.pkl           — {'time': StandardScaler, 'amount': RobustScaler}
+  scaler.pkl           — {'robust': RobustScaler, 'standard': StandardScaler}
 """
 
 from __future__ import annotations
@@ -42,8 +55,9 @@ logging.basicConfig(
 )
 log = logging.getLogger(__name__)
 
-VAL_SIZE:    float = 0.20
-RANDOM_SEED: int   = cfg.RANDOM_SEED
+VAL_SIZE:        float = 0.20
+RANDOM_SEED:     int   = cfg.RANDOM_SEED
+CLIP_THRESHOLD:  float = 5.0   # post-standardisation clip; >5σ is <0.0001% of N(0,1)
 
 # Feature columns in output order (Class column is dropped)
 FEATURE_COLS: list[str] = (
@@ -110,32 +124,54 @@ def split_semi_supervised(
     )
 
 
+_OUTLIER_COLS: list[str] = ["Time", "Amount"]   # heavy-tailed; need Stage 1
+
+
 def scale_features(
     X_train: pd.DataFrame,
     X_val:   pd.DataFrame,
 ) -> tuple[np.ndarray, np.ndarray, dict[str, object]]:
     """
-    Fit scalers on X_train, transform both splits.
-    Returns float32 arrays and a scalers dict for serialisation.
-    """
-    time_scaler   = StandardScaler()
-    amount_scaler = RobustScaler()
+    Two-stage scaling fit on X_train only.
 
+    Stage 1: RobustScaler on Time & Amount — neutralises outlier pull.
+    Stage 2: StandardScaler on all 30 features — maps everything to μ≈0, σ≈1.
+
+    Returns float32 arrays in FEATURE_COLS order and a scalers dict.
+    """
     X_train = X_train.copy()
     X_val   = X_val.copy()
 
-    X_train["Time"]   = time_scaler.fit_transform(X_train[["Time"]])
-    X_train["Amount"] = amount_scaler.fit_transform(X_train[["Amount"]])
+    # Stage 1: RobustScaler on outlier-prone columns
+    robust_scaler = RobustScaler()
+    X_train[_OUTLIER_COLS] = robust_scaler.fit_transform(X_train[_OUTLIER_COLS])
+    X_val[_OUTLIER_COLS]   = robust_scaler.transform(X_val[_OUTLIER_COLS])
 
-    X_val["Time"]   = time_scaler.transform(X_val[["Time"]])
-    X_val["Amount"] = amount_scaler.transform(X_val[["Amount"]])
+    # Stage 2: StandardScaler on ALL features (incl. V1-V28 for consistency)
+    standard_scaler = StandardScaler()
+    X_train[FEATURE_COLS] = standard_scaler.fit_transform(X_train[FEATURE_COLS])
+    X_val[FEATURE_COLS]   = standard_scaler.transform(X_val[FEATURE_COLS])
 
-    log.info("Scalers fitted on train.  Time~N(0,1)  Amount~RobustScaled")
+    # Stage 3: clip to [-CLIP_THRESHOLD, +CLIP_THRESHOLD]
+    # PCA features (V1-V28) can have isolated extreme values (e.g. V28 > 100σ)
+    # that blow up MSE loss and destabilise VAE training.
+    # Clipping at ±5σ removes <0.0001% of a true Gaussian and is applied
+    # identically to both splits (no leakage — no fit required).
+    tr_arr = X_train[FEATURE_COLS].to_numpy(dtype=np.float32)
+    va_arr = X_val[FEATURE_COLS].to_numpy(dtype=np.float32)
+    tr_arr = np.clip(tr_arr, -CLIP_THRESHOLD, CLIP_THRESHOLD)
+    va_arr = np.clip(va_arr, -CLIP_THRESHOLD, CLIP_THRESHOLD)
+
+    log.info(
+        "Scaling complete (train)  global_mean=%.4f  global_std=%.4f  "
+        "max_abs=%.2f  (clipped at ±%.1f)",
+        tr_arr.mean(), tr_arr.std(), np.abs(tr_arr).max(), CLIP_THRESHOLD,
+    )
 
     return (
-        X_train[FEATURE_COLS].to_numpy(dtype=np.float32),
-        X_val[FEATURE_COLS].to_numpy(dtype=np.float32),
-        {"time": time_scaler, "amount": amount_scaler},
+        tr_arr,
+        va_arr,
+        {"robust": robust_scaler, "standard": standard_scaler},
     )
 
 
@@ -162,10 +198,11 @@ def save_artifacts(
         pickle.dump(scalers, f)
 
     log.info("Saved to %s:", out)
-    log.info("  X_train.npy  %s", X_train.shape)
+    log.info("  X_train.npy  %s  (RobustScaler → StandardScaler)", X_train.shape)
     log.info("  X_val.npy    %s", X_val.shape)
     log.info("  y_train.npy  all-zeros  n=%d", len(y_train))
     log.info("  y_val.npy    fraud_rate=%.2f%%", y_val.mean() * 100)
+    log.info("  scaler.pkl   keys: robust, standard")
 
 
 # ── Entry point ────────────────────────────────────────────────────────────────

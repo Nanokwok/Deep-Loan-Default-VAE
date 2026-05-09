@@ -193,8 +193,11 @@ def vae_loss(
     #   KL = -½ Σ_d (1 + log σ²_d - μ²_d - exp(log σ²_d))
     # torch.sum(…, dim=1) → sum over latent dims per sample  (batch,)
     # .mean()              → average over the batch            scalar
+    # Clamp log_var to prevent exp() overflow (numerical stability).
+    # [-4, 15] keeps σ in [~0.02, ~3000] — well beyond any legitimate range.
+    log_var_clamped = log_var.clamp(-4, 15)
     kl_loss = -0.5 * torch.sum(
-        1.0 + log_var - mu.pow(2) - log_var.exp(),
+        1.0 + log_var_clamped - mu.pow(2) - log_var_clamped.exp(),
         dim=1,
     ).mean()
 
