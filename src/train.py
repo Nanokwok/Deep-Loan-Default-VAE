@@ -36,7 +36,9 @@ from src.config import (
     INPUT_DIM,
     LATENT_DIM,
     LEARNING_RATE,
+    LR_PATIENCE,
     NUM_EPOCHS,
+    PATIENCE,
     RANDOM_SEED,
 )
 from src.model import BetaVAE, vae_loss
@@ -52,9 +54,10 @@ _ROOT          = Path(__file__).resolve().parents[1]
 MODELS_DIR     = _ROOT / "models"
 CANONICAL_CKPT = MODELS_DIR / "best_vae.pth"
 
-EARLY_STOP_PATIENCE:   int = 10
-LR_SCHEDULER_PATIENCE: int = 5
-KL_ANNEAL_EPOCHS:      int = 10   # ramp β from 0 → BETA over first N epochs
+# Patience values come from src/config.py — edit them there, not here.
+# PATIENCE     → early stopping on Val AUPRC (imported as PATIENCE)
+# LR_PATIENCE  → ReduceLROnPlateau patience  (imported as LR_PATIENCE)
+KL_ANNEAL_EPOCHS: int = 10   # ramp β from 0 → BETA over first N epochs
 
 
 # ── Device ────────────────────────────────────────────────────────────────────
@@ -305,7 +308,7 @@ def train() -> Path:
     optimizer = optim.Adam(model.parameters(), lr=LEARNING_RATE)
     scheduler = optim.lr_scheduler.ReduceLROnPlateau(
         optimizer, mode="max",   # maximise AUPRC
-        factor=0.5, patience=LR_SCHEDULER_PATIENCE,
+        factor=0.5, patience=LR_PATIENCE,
     )
 
     MODELS_DIR.mkdir(parents=True, exist_ok=True)
@@ -326,8 +329,8 @@ def train() -> Path:
     patience_counter  = 0
 
     log.info("=" * 65)
-    log.info("Training  epochs=%d  patience=%d  metric=AUPRC",
-             NUM_EPOCHS, EARLY_STOP_PATIENCE)
+    log.info("Training  epochs=%d  patience=%d  lr_patience=%d  metric=AUPRC",
+             NUM_EPOCHS, PATIENCE, LR_PATIENCE)
     log.info("=" * 65)
 
     try:
@@ -377,7 +380,7 @@ def train() -> Path:
                 log.info("  [+] AUPRC improved → %.4f  checkpoint saved", best_auprc)
             else:
                 patience_counter += 1
-                if patience_counter >= EARLY_STOP_PATIENCE:
+                if patience_counter >= PATIENCE:
                     log.info("Early stopping at epoch %d  (best AUPRC=%.4f)", epoch, best_auprc)
                     break
 

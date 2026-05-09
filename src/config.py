@@ -17,15 +17,23 @@ RAW_CSV         = os.path.join(DATA_RAW_DIR, "creditcard.csv")
 # ── Target column & labels ─────────────────────────────────────────────────────
 TARGET_COL      = "Class"   # 0 = Normal, 1 = Fraud
 
-# ── Model dimensions ───────────────────────────────────────────────────────────
-INPUT_DIM       = 30        # Time + V1-V28 + Amount
-LATENT_DIM      = 2
-ENCODER_DIMS    = [16, 8, 4]
-DECODER_DIMS    = [4, 8, 16]
+# ── Model Architecture ────────────────────────────────────
+INPUT_DIM       = 30
+LATENT_DIM      = 4
+ENCODER_DIMS    = [20, 12]
+DECODER_DIMS    = [12, 20]
 
-# ── VAE Hyperparameters ────────────────────────────────────────────────────────
-BETA            = 0.001
+# ── VAE Hyperparameters ──────────────────────────────────────────
+BETA            = 0.005
 LEARNING_RATE   = 1e-3
-BATCH_SIZE      = 256
-NUM_EPOCHS      = 100
+BATCH_SIZE      = 512
+NUM_EPOCHS      = 200
 RANDOM_SEED     = 42
+
+# ── Early stopping & LR scheduler ────────────────────────────────
+# PATIENCE     : stop if Val AUPRC does not improve for this many epochs.
+#                Rule of thumb: ~10% of NUM_EPOCHS.  200 epochs → 20.
+# LR_PATIENCE  : halve LR after this many non-improving epochs.
+#                Should fire before early stopping: ~PATIENCE // 2.
+PATIENCE        = 20
+LR_PATIENCE     = 7
