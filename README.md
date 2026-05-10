@@ -348,7 +348,7 @@ Imports a set of functions from src/evaluate.py and runs the full threshold anal
 
 **See:** [reports/eda/figures/class\_distribution.png](https://github.com/Nanokwok/Deep-Fraud-VAE/blob/main/reports/eda/figures/class_distribution.png) for the class imbalance visualisation and [reports/eda/figures/time\_amount\_distributions.png](https://github.com/Nanokwok/Deep-Fraud-VAE/blob/main/reports/eda/figures/time_amount_distributions.png) for the distribution of Time and Amount.
 
-### **4.2 Pre-processing** {#4.2-pre-processing}
+### **4.2 Pre-processing** 
 
 Pre-processing is implemented in src/preprocess.py ([source code](https://github.com/Nanokwok/Deep-Fraud-VAE/blob/main/src/preprocess.py)). The pipeline has three stages, all fit exclusively on the training set to prevent data leakage.
 
@@ -379,6 +379,7 @@ source: reports/eda/figures/scaling\_quality.png ([click to see](https://github.
 EDA revealed isolated PCA outliers (e.g. V28 exceeds 100σ in a handful of rows). Post-standardisation, these would dominate the MSE loss disproportionately. A ±5σ clip removes them: in a N(0,1) distribution, fewer than 0.0001% of samples fall outside ±5σ under normal conditions, so this clip affects only genuine extremes. The same clip is applied identically to all splits (no fitting required).
 
 <img width="381" height="239" alt="image" src="https://github.com/user-attachments/assets/91773924-cc4a-47f8-9c78-aa263a645a8f" />
+
 *shows the raw PCA outlier structure that necessitated clipping*
 
 source: reports/eda/figures/pca\_feature\_boxplots.png  ([click to see](https://github.com/Nanokwok/Deep-Fraud-VAE/blob/main/reports/eda/figures/pca_feature_boxplots.png))
@@ -388,6 +389,7 @@ source: reports/eda/figures/pca\_feature\_boxplots.png  ([click to see](https://
 <img width="468" height="152" alt="image" src="https://github.com/user-attachments/assets/fe6560ff-ba32-4e92-920f-5acc9c9b5c60" />
 <img width="468" height="206" alt="image" src="https://github.com/user-attachments/assets/9e0720aa-0bab-4919-9013-9fb7fe6f3575" />
 *the split sizes and that fraud is absent from training*
+
 
 source: reports/eda/figures/split\_summary.png ([click to see](https://github.com/Nanokwok/Deep-Fraud-VAE/blob/main/reports/eda/figures/split_summary.png)) and reports/eda/figures/split\_consistency.png ([click to see](https://github.com/Nanokwok/Deep-Fraud-VAE/blob/main/reports/eda/figures/split_consistency.png))
 
@@ -467,6 +469,7 @@ To conclusion, The reconstruction loss continued declining while AUPRC plateaued
 Lower reconstruction loss ≠ better anomaly detection. The model was becoming better at reconstructing all inputs, including fraudulent ones, as it saw more training data. This is exactly why we use early stopping on AUPRC rather than loss.
 
 <img width="468" height="124" alt="image" src="https://github.com/user-attachments/assets/fca871b1-92ef-4b45-88b5-b9f20cdd0bb0" />
+
 *the three-panel plot (Loss / AUROC / AUPRC over epochs with best-epoch marker)*
 
 source: experiments/exp\_07/training\_curves.png ([click to see](https://github.com/Nanokwok/Deep-Fraud-VAE/blob/main/experiments/exp_07/training_curves.png))
@@ -503,21 +506,25 @@ Optimised against a cost matrix where missing a fraud costs 1,000 penalty units 
 Catches 229 out of 246 frauds (93.1% recall) at the cost of blocking 8,596 legitimate transactions. FPR of 20.2% makes this unacceptable for production use without a human review layer.
 
 <img width="468" height="129" alt="image" src="https://github.com/user-attachments/assets/d9078e36-44b7-4d51-9447-56c8a0894e81" />
+
  *Precision/Recall/F1 vs threshold, cost curve, and PR curve with operating points marked*
 
 Source: reports/evaluate/figures/threshold\_curves\_val.png [(click to see)](https://github.com/Nanokwok/Deep-Fraud-VAE/blob/main/reports/evaluate/figures/threshold_curves_val.png)
 
 <img width="376" height="289" alt="image" src="https://github.com/user-attachments/assets/5deeb8e0-c85f-43ba-b025-bc0ee74ac787" />
+
 *confusion matrix at Max F1 threshold*
 
 Source: reports/evaluate/figures/confusion\_matrix\_max\_f1.png [(click to see)](https://github.com/Nanokwok/Deep-Fraud-VAE/blob/main/reports/evaluate/figures/confusion_matrix_max_f1.png)
 
 <img width="468" height="360" alt="image" src="https://github.com/user-attachments/assets/47e1a0aa-1132-4265-b38b-533e97943d11" />
+
 *confusion matrix at Min Cost threshold*
 
 Source: reports/evaluate/figures/confusion\_matrix\_min\_cost.png [(click to see)](https://github.com/Nanokwok/Deep-Fraud-VAE/blob/main/reports/evaluate/figures/confusion_matrix_min_cost.png)
 
 <img width="468" height="360" alt="image" src="https://github.com/user-attachments/assets/708e6ea1-1750-4348-a0d7-fd75d6f70abf" />
+
 *confusion matrix at Recall ≥ 90% threshold*
 
 Source: reports/evaluate/figures/confusion\_matrix\_recall≥90pct.png [(click to see)](https://github.com/Nanokwok/Deep-Fraud-VAE/blob/main/reports/evaluate/figures/confusion_matrix_recall%E2%89%A590pct.png)
@@ -525,25 +532,36 @@ Source: reports/evaluate/figures/confusion\_matrix\_recall≥90pct.png [(click t
 ### **5.3 Anomaly Score Analysis** {#5.3-anomaly-score-analysis}
 
 <img width="375" height="146" alt="image" src="https://github.com/user-attachments/assets/444c4b56-9ef1-4675-b8fc-02011b4200d8" />
-experiments/exp\_07/anomaly\_scores.png ([link](https://github.com/Nanokwok/Deep-Fraud-VAE/blob/main/experiments/exp_07/anomaly_scores.png)) shows *the reconstruction error histogram for Normal vs Fraud on the validation set*. The fraud distribution has a significantly higher mean reconstruction error and a heavier right tail, confirming the VAE has learned a useful normal-class manifold. However, the distributions overlap substantially in the mid-range, which explains why precision is limited: low-value or atypical-normal transactions produce moderate reconstruction errors that overlap with moderate-signal fraud.
+
+experiments/exp_07/anomaly_scores.png ([link](https://github.com/Nanokwok/Deep-Fraud-VAE/blob/main/experiments/exp_07/anomaly_scores.png)) shows 
+
+*the reconstruction error histogram for Normal vs Fraud on the validation set*. 
+
+The fraud distribution has a significantly higher mean reconstruction error and a heavier right tail, confirming the VAE has learned a useful normal-class manifold. However, the distributions overlap substantially in the mid-range, which explains why precision is limited: low-value or atypical-normal transactions produce moderate reconstruction errors that overlap with moderate-signal fraud.
 
 <img width="468" height="130" alt="image" src="https://github.com/user-attachments/assets/39292ad6-d628-42fe-b5ac-41d999118897" />
-reports/evaluate/figures/score\_distribution.png ([link](https://github.com/Nanokwok/Deep-Fraud-VAE/blob/main/reports/evaluate/figures/score_distribution.png)) score distribution on the held-out test set.
+
+reports/evaluate/figures/score_distribution.png ([link](https://github.com/Nanokwok/Deep-Fraud-VAE/blob/main/reports/evaluate/figures/score_distribution.png)) score distribution on the held-out test set.
 
 <img width="468" height="277" alt="image" src="https://github.com/user-attachments/assets/198e844f-8d3b-4162-80f8-f80cd9e92717" />
-reports/evaluate/figures/score\_vs\_amount.png ([link](https://github.com/Nanokwok/Deep-Fraud-VAE/blob/main/reports/evaluate/figures/score_vs_amount.png)) scatter of anomaly score vs transaction Amount. This diagnoses amount-bias: frauds of all amounts tend to cluster at higher anomaly scores, but small-amount fraud overlaps with the normal distribution more than large-amount fraud. This is expected: fraudsters often start with small test charges.
+
+reports/evaluate/figures/score_vs_amount.png ([link](https://github.com/Nanokwok/Deep-Fraud-VAE/blob/main/reports/evaluate/figures/score_vs_amount.png)) scatter of anomaly score vs transaction Amount. This diagnoses amount-bias: frauds of all amounts tend to cluster at higher anomaly scores, but small-amount fraud overlaps with the normal distribution more than large-amount fraud. This is expected: fraudsters often start with small test charges.
 
 ### **5.4 Feature Reconstruction Error** {#5.4-feature-reconstruction-error}
 
 <img width="468" height="128" alt="image" src="https://github.com/user-attachments/assets/9526c7bf-8b23-4d5a-be6d-58ab29c694be" />
-source: reports/evaluate/figures/feature\_reconstruction\_error.png  ([link](https://github.com/Nanokwok/Deep-Fraud-VAE/blob/main/reports/evaluate/figures/feature_reconstruction_error.png))
+
+source: reports/evaluate/figures/feature\_reconstruction\_error.png  
+([link](https://github.com/Nanokwok/Deep-Fraud-VAE/blob/main/reports/evaluate/figures/feature_reconstruction_error.png))
 
 Per-feature mean weighted reconstruction error, sorted by the fraud−normal gap. Features V14, V3, V17, V10, and V12 show the largest gap, confirming that the feature weights assigned from EDA effectively concentrated the anomaly signal in the most discriminative dimensions.
 
 ### **5.5 Latent Space Visualisation** {#5.5-latent-space-visualisation}
 
 <img width="327" height="283" alt="image" src="https://github.com/user-attachments/assets/e118dbc7-956a-48ac-b28c-05b4f792a106" />
-source: reports/evaluate/figures/latent\_tsne.png  ([link](https://github.com/Nanokwok/Deep-Fraud-VAE/blob/main/reports/evaluate/figures/latent_tsne.png))
+
+source: reports/evaluate/figures/latent\_tsne.png  
+([link](https://github.com/Nanokwok/Deep-Fraud-VAE/blob/main/reports/evaluate/figures/latent_tsne.png))
 
 t-SNE projection of the 4-dimensional latent space (μ vectors) coloured by class. A stratified subsample (up to 5,000 points, balancing class representation) is used so fraud points are visible. If the encoder has learned fraud-discriminative structure despite never seeing fraud labels during training, fraud points will cluster separately from normal points in latent space. Clear cluster separation in this plot would confirm that the model's internal representation is already class-separating, the anomaly score threshold is then just a decision boundary on top of this.
 
