@@ -14,52 +14,6 @@
 
 **Academic Year 2026**
 
-**Table of contents**
-
-[**1\. Final Project Topic & Motivation	3**](#heading=)
-
-[1.1 Why is this topic interesting?	3](#heading=)
-
-[1.2 Why Deep Learning?	3](#heading=)
-
-[**2\. Deep Learning Architecture	7**](#heading=)
-
-[2.1 Model Description	7](#heading=)
-
-[2.2 Mathematical Formulation	8](#heading=)
-
-[2.3 Architecture Diagram	9](#heading=)
-
-[**3\. Code Explanation & Implementation Details	11**](#heading=)
-
-[3.1 GitHub Repository Link	17](#heading=)
-
-[**4\. Training Method & Dataset	18**](#heading=)
-
-[4.1 Dataset Details	18](#heading=)
-
-[4.2 Pre-processing	18](#4.2-pre-processing)
-
-[4.3 Training Hyperparameters	23](#heading=)
-
-[**5\. Evaluation & Results	26**](#heading=)
-
-[5.1 Training vs. Validation Loss	26](#5.1-training-vs.-validation-loss)
-
-[5.2 Metrics on Test Set	27](#5.2-metrics-on-test-set)
-
-[5.3 Anomaly Score Analysis	30](#5.3-anomaly-score-analysis)
-
-[5.4 Feature Reconstruction Error	32](#5.4-feature-reconstruction-error)
-
-[5.5 Latent Space Visualisation	32](#5.5-latent-space-visualisation)
-
-[5.6 Discussion	33](#5.6-discussion)
-
-[**7\. Team Contributions	35**](#heading=)
-
-## 
-
 ## **1\. Final Project Topic & Motivation**
 
 ### **1.1 Why is this topic interesting?**
@@ -264,7 +218,7 @@ During this work, we have check
 
 **Preprocess**
 
-*![][image4]Pre-processing Architecture*
+<img width="468" height="186" alt="image" src="https://github.com/user-attachments/assets/6766cbc1-f84c-48fe-bc19-95f92e323cd7" />
 
 **src/preprocess.py ([source code](https://github.com/Nanokwok/Deep-Fraud-VAE/blob/main/src/preprocess.py))**
 
@@ -315,7 +269,9 @@ With only 0.17% fraud, a model can achieve very low reconstruction loss while co
 
 **Uses:** src/config.py → for ENCODER\_DIMS, DECODER\_DIMS, LATENT\_DIM, LEAKY\_RELU\_SLOPE, BETA
 
-**Architecture — BetaVAE(nn.Module)**![][image5]
+**Architecture — BetaVAE(nn.Module)**!
+
+<img width="468" height="296" alt="image" src="https://github.com/user-attachments/assets/9b63c5a8-0eea-4e32-8426-f14f1c3b0360" />
 
 *β-Variational Autoencoder (β-VAE) Architecture*
 
@@ -351,31 +307,11 @@ Imports a set of functions from src/evaluate.py and runs the full threshold anal
 | plot\_confusion\_matrix\_heatmap() | 2×2 heatmap annotated with TP/FP/FN/TN counts and their cost (penalty units) at a given threshold |
 | run\_evaluation() | End-to-end pipeline: load checkpoint → score → sweep thresholds → find optimal → plot → save thresholds\_val.json |
 
-### 
 
 ### **3.1 GitHub Repository Link**
 
 **Link:** [https://github.com/Nanokwok/Deep-Fraud-VAE](https://github.com/Nanokwok/Deep-Fraud-VAE) 
 
-## 
-
-## 
-
-## 
-
-## 
-
-## 
-
-## 
-
-## 
-
-## 
-
-## 
-
-## 
 
 ## **4\. Training Method & Dataset**
 
