@@ -388,6 +388,7 @@ source: reports/eda/figures/pca\_feature\_boxplots.png  ([click to see](https://
 
 <img width="468" height="152" alt="image" src="https://github.com/user-attachments/assets/fe6560ff-ba32-4e92-920f-5acc9c9b5c60" />
 <img width="468" height="206" alt="image" src="https://github.com/user-attachments/assets/9e0720aa-0bab-4919-9013-9fb7fe6f3575" />
+
 *the split sizes and that fraud is absent from training*
 
 
@@ -438,7 +439,8 @@ All hyperparameters are defined in src/config.py ([click to see](https://github.
 
 **Feature weights (from EDA discriminative analysis)**
 
-| Feature | Weight | |Δμ| (fraud−normal) |
+
+| Feature | Weight | \|Δμ\| (fraud−normal) |
 | ----- | ----- | ----- |
 | V3 | 3.0 | 7.05 |
 | V14 | 3.0 | 6.98 |
