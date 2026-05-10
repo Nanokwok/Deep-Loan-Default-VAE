@@ -1,5 +1,3 @@
-# **![][image1]**
-
 **Deep Learning Final Project Report**
 
 **Semi-Supervised Anomaly Detection for Credit Card Fraud using a β-Variational Autoencoder**
@@ -62,8 +60,6 @@
 
 ## 
 
-## 
-
 ## **1\. Final Project Topic & Motivation**
 
 ### **1.1 Why is this topic interesting?**
@@ -100,7 +96,7 @@ Supervised models (Logistic Regression, Random Forest, XGBoost) were trained on 
 | One-Class SVM | No | 0.5569 | 0.9583 | 0.6174 | 0.5661 | 0.6789 |
 | Isolation Forest | No | 0.3092 | 0.9585 | 0.4193 | 0.3333 | 0.5650 |
 
-**![][image2]**
+<img width="468" height="311" alt="image" src="https://github.com/user-attachments/assets/dae9a2e8-112b-444d-8e6b-6ede0ee52f24" />
 
 *Precision-Recall Curve Comparison*
 
@@ -122,13 +118,6 @@ Detection performance has a ceiling set by the data itself. The AUPRC of 0.676 r
 
 The model also has no mechanism to adapt over time. Fraud patterns shift, and when they do, the model needs to be retrained from scratch on updated normal transaction data.
 
-## 
-
-## 
-
-## 
-
-## 
 
 ## **2\. Deep Learning Architecture**
 
@@ -211,7 +200,7 @@ We maximise the ELBO, equivalently minimise
 
 ### **2.3 Architecture Diagram**
 
-#### **![][image3]**
+<img width="468" height="187" alt="image" src="https://github.com/user-attachments/assets/19afe3a4-08b3-4d59-abd9-3d4b8a93ad5a" />
 
 *Overall Architecture*
 
