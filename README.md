@@ -56,13 +56,13 @@ Supervised models (Logistic Regression, Random Forest, XGBoost) were trained on 
 
 * **Strengths of Deep Learning for this problem (VAE)**
 
-1. Semi-supervised by design.   
+1. Semi-supervised by design
    The VAE is trained exclusively on the 199,020 normal transactions. It learns a compressed internal representation (latent space) of what a legitimate transaction looks like. It never sees a fraud label during training. At inference time, a fraudulent transaction, which does not conform to the normal data manifold, produces a high reconstruction error. This is the anomaly score. This design means the model remains effective even when fraud labels are completely unavailable for new fraud patterns.  
-2. Latent manifold compression.   
+2. Latent manifold compression   
    The encoder forces the 30-dimensional input through a 4-dimensional bottleneck. The model cannot memorise every input; it must learn the underlying structure. Anomalies that fall outside this learned structure cannot be reconstructed accurately.  
-3. Feature-weighted loss informed by EDA.   
+3. Feature-weighted loss informed by EDA   
    The EDA revealed that features V3, V14, and V17 have the largest mean-shift between fraud and normal (|Δμ| \> 6.5 standard deviations). By upweighting these features in the reconstruction loss (weight \= 3.0), the anomaly score becomes more sensitive to the dimensions that actually differ between classes. This is a direct bridge from EDA to architecture.  
-4. β-regularisation for latent structure.   
+4. β-regularisation for latent structure   
    The β term controls the trade-off between reconstruction fidelity and latent space regularity. A small β (0.005) keeps reconstruction quality high, the primary concern for anomaly scoring, while still regularising the latent space enough to prevent overfitting.  
 * **Weaknesses/Challenges** 
 
@@ -83,6 +83,7 @@ The model is a **β-Variational Autoencoder (β-VAE)** implemented in PyTorch. I
 
 **Encoder** compresses the input into a lower-dimensional representation through two fully connected layers:
 
+```
 Input (30) → Linear(30→32) → BatchNorm(32) → LeakyReLU(0.01) → Dropout(0.2)
 
            → Linear(32→16) → BatchNorm(16) → LeakyReLU(0.01) → Dropout(0.2)
@@ -90,67 +91,78 @@ Input (30) → Linear(30→32) → BatchNorm(32) → LeakyReLU(0.01) → Dropout
            → fc\_mu(16→4)        \[latent mean μ\]
 
            → fc\_log\_var(16→4)   \[latent log-variance log σ²\]
+```
 
 **Why LeakyReLU?** Features V1–V28 are PCA-transformed and contain many negative values. Standard ReLU kills gradients for all negative activations ("dying ReLU"), causing neurons to permanently output zero. LeakyReLU(negative\_slope=0.01) passes a small gradient (0.01 × x) for x \< 0, keeping all neurons alive throughout training.
 
-**Why BatchNorm?** Each linear layer is followed by BatchNorm, which normalises activations within each mini-batch. This stabilises training by reducing internal covariate shift — especially important here because the feature scale varies significantly across V1–V28, Time, and Amount even after global StandardScaling.
+**Why BatchNorm?** Each linear layer is followed by BatchNorm, which normalises activations within each mini-batch. This stabilises training by reducing internal covariate shift, especially important here because the feature scale varies significantly across V1–V28, Time, and Amount even after global StandardScaling.
 
 **Latent Space (Reparameterisation Trick):** Rather than sampling z directly (which is non-differentiable), the model uses:
 
-z \= μ \+ ε · σ     where ε \~ N(0, I)
+```
+z = μ + ε · σ     where ε ~ N(0, I)
+```
 
-During training, ε adds stochasticity that regularises the latent space. During inference (model.eval()), the model returns μ directly — producing a deterministic, lower-variance reconstruction error. This determinism is important for a stable anomaly score.
+During training, ε adds stochasticity that regularises the latent space. During inference (model.eval()), the model returns μ directly, producing a deterministic, lower-variance reconstruction error. This determinism is important for a stable anomaly score.
 
 **Decoder** mirrors the encoder, mapping z back to the 30-dimensional input space:
 
+```
 Latent z (4) → Linear(4→16) → BatchNorm(16) → LeakyReLU(0.01) → Dropout(0.2)
 
              → Linear(16→32) → BatchNorm(32) → LeakyReLU(0.01) → Dropout(0.2)
 
              → Linear(32→30)   \[no final activation — raw output in StandardScaler space\]
+```
 
 **Why no final activation?** The reconstruction target is the StandardScaler-normalised input, which lives on ℝ (unbounded real values). A sigmoid or tanh activation would clip the output range and introduce systematic reconstruction error. The linear output matches the target space exactly.
 
-**Total parameters:** With this architecture (30→32→16→μ/logσ² at dim 4, decoder mirrors), the model has approximately **3,400 trainable parameters** — deliberately compact to avoid memorising training samples.
+**Total parameters:** With this architecture (30→32→16→μ/logσ² at dim 4, decoder mirrors), the model has approximately **3,400 trainable parameters**, deliberately compact to avoid memorising training samples.
 
 ### **2.2 Mathematical Formulation**
 
 The model optimises the **weighted β-Evidence Lower Bound (β-ELBO)**
 
-L(x) \= E\_q\[log p(x|z)\] − β · KL\[q(z|x) || p(z)\]
+```
+L(x) = E_q[log p(x|z)] − β · KL[q(z|x) || p(z)]
 
-       \= −recon\_loss − β · kl\_loss
+      = −recon_loss − β · kl_loss
+```
 
 We maximise the ELBO, equivalently minimise
 
 * **Reconstruction Loss** (weighted MSE)  
     
-  recon\_loss \= (1/N) · Σᵢ Σ\_d  w\_d · (x\_{id} − x̂\_{id})²  
+```
+recon_loss = (1/N) · Σᵢ Σ_d  w_d · (x_{id} − x̂_{id})²
+```
     
   where w\_d is the per-feature weight. Features with high |mean\_fraud − mean\_normal| receive elevated weights (V3, V14, V17 → w=3.0; V12, V10 → w=2.5; etc.). Features not listed default to w=1.0. This focuses reconstruction pressure on the dimensions most likely to spike when fraud passes through the normal-trained decoder.
 
 * **KL Divergence** (closed form for diagonal Gaussians)
 
-  kl\_loss \= (1/N) · Σᵢ −½ · Σ\_d (1 \+ log σ²\_{id} − μ²\_{id} − σ²\_{id})
-
+```
+kl_loss = (1/N) · Σᵢ −½ · Σ_d (1 + log σ²_{id} − μ²_{id} − σ²_{id})
+```
 
   The KL term regularises the posterior q(z|x) \= N(μ, σ²) toward the prior p(z) \= N(0, I), preventing the encoder from ignoring the prior and collapsing into a deterministic encoder. Log-variance is clamped to \[−4, 15\] before exponentiation to prevent numerical overflow.
 
 * **KL Annealing:** β is linearly ramped from 0 → 0.005 over the first 50 epochs
 
-  β\_effective(epoch) \= min(BETA, BETA × epoch / KL\_ANNEAL\_EPOCHS)
-
+```
+β_effective(epoch) = min(BETA, BETA × epoch / KL_ANNEAL_EPOCHS)
+```
 
   This lets the model focus on reconstruction quality first (β≈0), then gradually tighten the latent space. Without annealing, early KL pressure can cause posterior collapse where the encoder ignores the input and outputs the prior — producing uninformative μ=0 for all inputs.
 
 * **Anomaly Score** at inference time
 
-  score(x) \= (1/D) · Σ\_d  w\_d · (x\_d − x̂\_d)²
-
+```
+score(x) = (1/D) · Σ_d  w_d · (x_d − x̂_d)²
+```
 
   The score is the per-sample weighted mean squared reconstruction error. Higher score → more anomalous → flagged as potential fraud.
 
-### 
 
 ### **2.3 Architecture Diagram**
 
@@ -186,7 +198,7 @@ z is expanded back through two fully connected layers, 4→16 then 16→32, each
 
 **Loss**
 
-The total loss combines two terms. Weighted MSE measures how accurately the decoder reconstructs the input. Rather than treating all 30 features equally, feature weights are assigned based on EDA findings: features where the mean difference between fraud and normal transactions is largest get higher weights. V3, V14, and V17 each received a weight of 3.0 because EDA showed they carry the strongest fraud signal (|Δμ| above 6.5). The full feature weight table is defined in [config.py](https://github.com/Nanokwok/Deep-Fraud-VAE/blob/main/src/config.py%20) 
+The total loss combines two terms. Weighted MSE measures how accurately the decoder reconstructs the input. Rather than treating all 30 features equally, feature weights are assigned based on EDA findings: features where the mean difference between fraud and normal transactions is largest get higher weights. V3, V14, and V17 each received a weight of 3.0 because EDA showed they carry the strongest fraud signal (|Δμ| above 6.5). The full feature weight table is defined in [config.py](https://github.com/Nanokwok/Deep-Fraud-VAE/blob/main/src/config.py) 
 
 ## **3\. Code Explanation & Implementation Details**
 
