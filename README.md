@@ -1,3 +1,5 @@
+<img width="936" height="374" alt="image" src="https://github.com/user-attachments/assets/2a552c3a-1bfd-4136-8758-6ea61721cb89" />
+
 **Deep Learning Final Project Report**
 
 **Semi-Supervised Anomaly Detection for Credit Card Fraud using a β-Variational Autoencoder**
