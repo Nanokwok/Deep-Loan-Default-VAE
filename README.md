@@ -16,9 +16,9 @@
 
 **Academic Year 2026**
 
-## **1\. Final Project Topic & Motivation**
+## **Chapter 1: Final Project Topic & Motivation**
 
-### **1.1 Why is this topic interesting?**
+### **1.1. Why is this topic interesting?**
 
 Credit card fraud detection is interesting as a deep learning problem because the difficulty is built into the data structure itself. The dataset contains 284,807 transactions from European cardholders, of which only 492 are fraudulent (0.17%). A model that simply predicts "normal" for every input achieves 99.83% accuracy while catching zero fraud, which means standard classification approaches fail before they even start.
 
@@ -28,7 +28,7 @@ This framing shifts the problem from classification to anomaly detection, which 
 
 The combination of extreme class imbalance, semi-supervised training, and threshold engineering makes this a more realistic and technically layered problem than standard classification benchmarks.
 
-### **1.2 Why Deep Learning?**
+### **1.2. Why Deep Learning?**
 
 * **Comparison with other approaches**
 
@@ -58,13 +58,13 @@ Supervised models (Logistic Regression, Random Forest, XGBoost) were trained on 
 
 **Strengths of Deep Learning for this problem (VAE)**
 
-1. Semi-supervised by design
+1. **Semi-supervised by design**
    The VAE is trained exclusively on the 199,020 normal transactions. It learns a compressed internal representation (latent space) of what a legitimate transaction looks like. It never sees a fraud label during training. At inference time, a fraudulent transaction, which does not conform to the normal data manifold, produces a high reconstruction error. This is the anomaly score. This design means the model remains effective even when fraud labels are completely unavailable for new fraud patterns.  
-2. Latent manifold compression   
+2. **Latent manifold compression**
    The encoder forces the 30-dimensional input through a 4-dimensional bottleneck. The model cannot memorise every input; it must learn the underlying structure. Anomalies that fall outside this learned structure cannot be reconstructed accurately.  
-3. Feature-weighted loss informed by EDA   
+3. **Feature-weighted loss informed by EDA**
    The EDA revealed that features V3, V14, and V17 have the largest mean-shift between fraud and normal (|Δμ| \> 6.5 standard deviations). By upweighting these features in the reconstruction loss (weight \= 3.0), the anomaly score becomes more sensitive to the dimensions that actually differ between classes. This is a direct bridge from EDA to architecture.  
-4. β-regularisation for latent structure   
+4. **β-regularisation for latent structure**
    The β term controls the trade-off between reconstruction fidelity and latent space regularity. A small β (0.005) keeps reconstruction quality high, the primary concern for anomaly scoring, while still regularising the latent space enough to prevent overfitting.  
    
 **Weaknesses/Challenges** 
@@ -76,9 +76,9 @@ Detection performance has a ceiling set by the data itself. The AUPRC of 0.676 r
 The model also has no mechanism to adapt over time. Fraud patterns shift, and when they do, the model needs to be retrained from scratch on updated normal transaction data.
 
 
-## **2\. Deep Learning Architecture**
+## **Chapter 2: Deep Learning Architecture**
 
-### **2.1 Model Description**
+### **2.1. Model Description**
 
 The model is a **β-Variational Autoencoder (β-VAE)** implemented in PyTorch. It is a generative model composed of three components: an encoder, a latent space parameterisation, and a decoder.
 
@@ -108,7 +108,7 @@ During training, ε adds stochasticity that regularises the latent space. During
 
 **Total parameters** With this architecture (30→32→16→μ/logσ² at dim 4, decoder mirrors), the model has approximately **3,400 trainable parameters**, deliberately compact to avoid memorising training samples.
 
-### **2.2 Mathematical Formulation**
+### **2.2. Mathematical Formulation**
 
 The model optimises the **weighted β-Evidence Lower Bound (β-ELBO)**
 
@@ -153,7 +153,7 @@ score(x) = (1/D) · Σ_d  w_d · (x_d − x̂_d)²
   The score is the per-sample weighted mean squared reconstruction error. Higher score → more anomalous → flagged as potential fraud.
 
 
-### **2.3 Architecture Diagram**
+### **2.3. Architecture Diagram**
 
 <img width="468" height="187" alt="image" src="https://github.com/user-attachments/assets/19afe3a4-08b3-4d59-abd9-3d4b8a93ad5a" />
 
@@ -189,9 +189,9 @@ z is expanded back through two fully connected layers, 4→16 then 16→32, each
 
 The total loss combines two terms. Weighted MSE measures how accurately the decoder reconstructs the input. Rather than treating all 30 features equally, feature weights are assigned based on EDA findings: features where the mean difference between fraud and normal transactions is largest get higher weights. V3, V14, and V17 each received a weight of 3.0 because EDA showed they carry the strongest fraud signal (|Δμ| above 6.5). The full feature weight table is defined in [config.py](https://github.com/Nanokwok/Deep-Fraud-VAE/blob/main/src/config.py) 
 
-## **3\. Code Explanation & Implementation Details**
+## **Chapter 3: Code Explanation & Implementation Details**
 
-**EDA**
+**3.1.1. EDA**
 
 **01\_eda.ipynb ([source code](https://github.com/Nanokwok/Deep-Fraud-VAE/blob/main/notebooks/01_eda.ipynb))**
 
@@ -217,7 +217,7 @@ During this work, we have check
 * PCA feature boxplots for normal vs. fraud on processed data  
 * No data leakage between train/val/test splits
 
-**Preprocess**
+**3.1.2. Pre-process**
 
 <img width="468" height="186" alt="image" src="https://github.com/user-attachments/assets/6766cbc1-f84c-48fe-bc19-95f92e323cd7" />
 
@@ -234,7 +234,7 @@ Four functions chained by preprocess() which are
 | scale\_features() | Stage 1: RobustScaler on Time & Amount. Stage 2: StandardScaler on all 30 features. Stage 3: clip to ±5.0. All fitted on X\_train only — no leakage |
 | save\_artifacts() | Writes X\_train.npy, X\_val.npy, X\_test.npy, label arrays, feature\_columns.json, and scaler.pkl to data/processed/ |
 
-**Train**
+**3.1.3. Train**
 
 **03\_train.ipynb ([source code](https://github.com/Nanokwok/Deep-Fraud-VAE/blob/main/notebooks/03_train.ipynb))**
 
@@ -277,7 +277,7 @@ With only 0.17% fraud, a model can achieve very low reconstruction loss while co
 | reparameterise() | Training: returns mu \+ eps \* std. Eval: returns mu directly — deterministic output for a stable anomaly score |
 | vae\_loss() | Weighted MSE reconstruction loss \+ KL divergence (log\_var clamped to \[−4, 15\] for numerical stability). Total \= recon\_loss \+ beta \* kl\_loss |
 
-**Evaluate**
+**3.1.4. Evaluate**
 
 **04\_evaluate.ipynb ([source code](https://github.com/Nanokwok/Deep-Fraud-VAE/blob/main/notebooks/04_evaluate.ipynb))**
 
@@ -303,12 +303,12 @@ Imports a set of functions from src/evaluate.py and runs the full threshold anal
 | run\_evaluation() | End-to-end pipeline: load checkpoint → score → sweep thresholds → find optimal → plot → save thresholds\_val.json |
 
 
-### **3.1 GitHub Repository Link**
+### **3.2. GitHub Repository Link**
 
 **Link:** [https://github.com/Nanokwok/Deep-Fraud-VAE](https://github.com/Nanokwok/Deep-Fraud-VAE) 
 
 
-## **4\. Training Method & Dataset**
+## **Chapter 4: Training Method & Dataset**
 
 ### **4.1 Dataset Details**
 
@@ -331,7 +331,7 @@ Imports a set of functions from src/evaluate.py and runs the full threshold anal
 
 **See:** [reports/eda/figures/class\_distribution.png](https://github.com/Nanokwok/Deep-Fraud-VAE/blob/main/reports/eda/figures/class_distribution.png) for the class imbalance visualisation and [reports/eda/figures/time\_amount\_distributions.png](https://github.com/Nanokwok/Deep-Fraud-VAE/blob/main/reports/eda/figures/time_amount_distributions.png) for the distribution of Time and Amount.
 
-### **4.2 Pre-processing** 
+### **4.2. Pre-processing** 
 
 Pre-processing is implemented in src/preprocess.py ([source code](https://github.com/Nanokwok/Deep-Fraud-VAE/blob/main/src/preprocess.py)). The pipeline has three stages, all fit exclusively on the training set to prevent data leakage.
 
@@ -395,7 +395,7 @@ source: reports/eda/figures/discriminative\_features.png ([click to see](https:/
 
 source: reports/eda/figures/top\_features\_overlay.png ([click to see](https://github.com/Nanokwok/Deep-Fraud-VAE/blob/main/reports/eda/figures/top_features_overlay.png)) and reports/eda/figures/top10\_boxplots.png ([click to see](https://github.com/Nanokwok/Deep-Fraud-VAE/blob/main/reports/eda/figures/top10_boxplots.png))
 
-### **4.3 Training Hyperparameters**
+### **4.3. Training Hyperparameters**
 
 All hyperparameters are defined in src/config.py ([click to see](https://github.com/Nanokwok/Deep-Fraud-VAE/blob/main/src/config.py)) and backed up per experiment in experiments/exp\_07/config\_backup.py. ([click to see](https://github.com/Nanokwok/Deep-Fraud-VAE/blob/main/experiments/exp_07/config_backup.py))
 
@@ -437,9 +437,9 @@ All hyperparameters are defined in src/config.py ([click to see](https://github.
 | V11 | 2.0 | 3.80 |
 | All others | 1.0 | \- |
 
-## **5\. Evaluation & Results**
+## **Chapter 5: Evaluation & Results**
 
-### **5.1 Training vs. Validation Loss** 
+### **5.1. Training vs. Validation Loss** 
 
 The model was trained for 200 epochs with early stopping. The best checkpoint (Experiment 07\) was saved at epoch 12, at which point Val AUPRC \= 0.6760 and Val AUROC \= 0.9462.
 
@@ -459,7 +459,7 @@ Lower reconstruction loss ≠ better anomaly detection. The model was becoming b
 
 source: experiments/exp\_07/training\_curves.png ([click to see](https://github.com/Nanokwok/Deep-Fraud-VAE/blob/main/experiments/exp_07/training_curves.png))
 
-### **5.2 Metrics on Test Set** 
+### **5.2. Metrics on Test Set** 
 
 The test set contains 42,894 transactions (246 fraud, 42,648 normal, fraud rate 0.57%).
 
@@ -514,7 +514,7 @@ Source: reports/evaluate/figures/confusion\_matrix\_min\_cost.png [(click to see
 
 Source: reports/evaluate/figures/confusion\_matrix\_recall≥90pct.png [(click to see)](https://github.com/Nanokwok/Deep-Fraud-VAE/blob/main/reports/evaluate/figures/confusion_matrix_recall%E2%89%A590pct.png)
 
-### **5.3 Anomaly Score Analysis** 
+### **5.3. Anomaly Score Analysis** 
 
 <img width="375" height="146" alt="image" src="https://github.com/user-attachments/assets/444c4b56-9ef1-4675-b8fc-02011b4200d8" />
 
@@ -532,7 +532,7 @@ reports/evaluate/figures/score_distribution.png ([link](https://github.com/Nanok
 
 reports/evaluate/figures/score_vs_amount.png ([link](https://github.com/Nanokwok/Deep-Fraud-VAE/blob/main/reports/evaluate/figures/score_vs_amount.png)) scatter of anomaly score vs transaction Amount. This diagnoses amount-bias: frauds of all amounts tend to cluster at higher anomaly scores, but small-amount fraud overlaps with the normal distribution more than large-amount fraud. This is expected: fraudsters often start with small test charges.
 
-### **5.4 Feature Reconstruction Error** 
+### **5.4. Feature Reconstruction Error** 
 
 <img width="468" height="128" alt="image" src="https://github.com/user-attachments/assets/9526c7bf-8b23-4d5a-be6d-58ab29c694be" />
 
@@ -541,7 +541,7 @@ source: reports/evaluate/figures/feature\_reconstruction\_error.png
 
 Per-feature mean weighted reconstruction error, sorted by the fraud−normal gap. Features V14, V3, V17, V10, and V12 show the largest gap, confirming that the feature weights assigned from EDA effectively concentrated the anomaly signal in the most discriminative dimensions.
 
-### **5.5 Latent Space Visualisation** 
+### **5.5. Latent Space Visualisation** 
 
 <img width="327" height="283" alt="image" src="https://github.com/user-attachments/assets/e118dbc7-956a-48ac-b28c-05b4f792a106" />
 
@@ -550,7 +550,7 @@ source: reports/evaluate/figures/latent\_tsne.png
 
 t-SNE projection of the 4-dimensional latent space (μ vectors) coloured by class. A stratified subsample (up to 5,000 points, balancing class representation) is used so fraud points are visible. If the encoder has learned fraud-discriminative structure despite never seeing fraud labels during training, fraud points will cluster separately from normal points in latent space. Clear cluster separation in this plot would confirm that the model's internal representation is already class-separating, the anomaly score threshold is then just a decision boundary on top of this.
 
-### **5.6 Discussion** 
+### **5.6. Discussion** 
 
 The model performed this way because AUROC of 0.946 shows strong ranking ability where the model clearly separates most fraud from normal. The AUPRC of 0.676 reflects the harder challenge of maintaining high precision at high recall under extreme imbalance. The most common error cases are
 
@@ -564,7 +564,7 @@ Unusual legitimate transactions (large amounts, unusual timing, rare merchant ty
 
 The feature-weighting strategy demonstrably helps: the per-feature reconstruction error plot shows V14, V3, V17 dominating the fraud-normal gap that exactly the features with elevated weights. Without these weights, all 30 features would contribute equally, and the strong signal in V14/V3/V17 would be diluted by noise from the 20 low-signal features
 
-## 6\. Reference Articles & Related Work
+## Chapter 6: Reference Articles & Related Work
 
 1. Diederik P Kingma, Max Welling. (2013). Auto-Encoding Variational Bayes. *arXiv:1312.6114*. [https://arxiv.org/abs/1312.6114](https://arxiv.org/abs/1312.6114)   
 2. [Irina Higgins](https://openreview.net/profile?email=irinah%40google.com), [Loic Matthey](https://openreview.net/profile?email=lmatthey%40google.com), [Arka Pal](https://openreview.net/profile?email=arkap%40google.com), [Christopher Burgess](https://openreview.net/profile?email=cpburgess%40google.com), [Xavier Glorot](https://openreview.net/profile?email=glorotx%40google.com), [Matthew Botvinick](https://openreview.net/profile?email=botvinick%40google.com), [Shakir Mohamed](https://openreview.net/profile?email=shakir%40google.com), [Alexander Lerchner](https://openreview.net/profile?email=lerchner%40google.com). (2017). beta-VAE: Learning Basic Visual Concepts with a Constrained Variational Framework. *ICLR 2017*. [https://openreview.net/forum?id=Sy2fzU9gl](https://openreview.net/forum?id=Sy2fzU9gl)   
@@ -573,7 +573,7 @@ The feature-weighting strategy demonstrably helps: the per-feature reconstructio
 5. PyTorch Documentation \- torch.nn, torch.optim, DataLoader. [https://docs.pytorch.org/docs/2.11/index.html](https://docs.pytorch.org/docs/2.11/index.html)   
 6. Kaggle Dataset \- Credit Card Fraud Detection. Machine Learning Group, ULB. [https://www.kaggle.com/datasets/mlg-ulb/creditcardfraud](https://www.kaggle.com/datasets/mlg-ulb/creditcardfraud) 
 
-## **7\. Team Contributions**
+## **Chapter 7: Team Contributions**
 
 | Team Member Name | Specific Tasks Completed | % of Total Work   |
 | :---- | :---- | :---- |
