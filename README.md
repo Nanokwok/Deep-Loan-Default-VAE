@@ -56,7 +56,7 @@ Supervised models (Logistic Regression, Random Forest, XGBoost) were trained on 
 
 *Precision-Recall Curve Comparison*
 
-* **Strengths of Deep Learning for this problem (VAE)**
+**Strengths of Deep Learning for this problem (VAE)**
 
 1. Semi-supervised by design
    The VAE is trained exclusively on the 199,020 normal transactions. It learns a compressed internal representation (latent space) of what a legitimate transaction looks like. It never sees a fraud label during training. At inference time, a fraudulent transaction, which does not conform to the normal data manifold, produces a high reconstruction error. This is the anomaly score. This design means the model remains effective even when fraud labels are completely unavailable for new fraud patterns.  
@@ -66,7 +66,8 @@ Supervised models (Logistic Regression, Random Forest, XGBoost) were trained on 
    The EDA revealed that features V3, V14, and V17 have the largest mean-shift between fraud and normal (|Δμ| \> 6.5 standard deviations). By upweighting these features in the reconstruction loss (weight \= 3.0), the anomaly score becomes more sensitive to the dimensions that actually differ between classes. This is a direct bridge from EDA to architecture.  
 4. β-regularisation for latent structure   
    The β term controls the trade-off between reconstruction fidelity and latent space regularity. A small β (0.005) keeps reconstruction quality high, the primary concern for anomaly scoring, while still regularising the latent space enough to prevent overfitting.  
-* **Weaknesses/Challenges** 
+   
+**Weaknesses/Challenges** 
 
 The model outputs a reconstruction error, not a probability, so picking a decision threshold is a separate problem with no single correct answer. The threshold chosen depends on what the business cares about: catching more fraud means accepting more false alarms, and finding that balance is ultimately a cost judgment rather than a modeling one.
 
@@ -81,23 +82,17 @@ The model also has no mechanism to adapt over time. Fraud patterns shift, and wh
 
 The model is a **β-Variational Autoencoder (β-VAE)** implemented in PyTorch. It is a generative model composed of three components: an encoder, a latent space parameterisation, and a decoder.
 
-**Input:** A 30-dimensional vector representing one credit card transaction — features Time, V1–V28, and Amount — all standardised to μ≈0, σ≈1.
+<img width="468" height="296" alt="image" src="https://github.com/user-attachments/assets/9b63c5a8-0eea-4e32-8426-f14f1c3b0360" />
 
-**Encoder** compresses the input into a lower-dimensional representation through two fully connected layers:
+*β-Variational Autoencoder (β-VAE) Architecture*
 
-```
-Input (30) → Linear(30→32) → BatchNorm(32) → LeakyReLU(0.01) → Dropout(0.2)
+**Input:** A 30-dimensional vector representing one credit card transaction, features Time, V1–V28, and Amount, all standardized to μ≈0, σ≈1.
 
-           → Linear(32→16) → BatchNorm(16) → LeakyReLU(0.01) → Dropout(0.2)
+**Encoder** compresses the input into a lower-dimensional representation through two fully connected layers
 
-           → fc\_mu(16→4)        \[latent mean μ\]
+**LeakyReLU** Features V1–V28 are PCA-transformed and contain many negative values. Standard ReLU kills gradients for all negative activations ("dying ReLU"), causing neurons to permanently output zero. LeakyReLU(negative\_slope=0.01) passes a small gradient (0.01 × x) for x \< 0, keeping all neurons alive throughout training.
 
-           → fc\_log\_var(16→4)   \[latent log-variance log σ²\]
-```
-
-**Why LeakyReLU?** Features V1–V28 are PCA-transformed and contain many negative values. Standard ReLU kills gradients for all negative activations ("dying ReLU"), causing neurons to permanently output zero. LeakyReLU(negative\_slope=0.01) passes a small gradient (0.01 × x) for x \< 0, keeping all neurons alive throughout training.
-
-**Why BatchNorm?** Each linear layer is followed by BatchNorm, which normalises activations within each mini-batch. This stabilises training by reducing internal covariate shift, especially important here because the feature scale varies significantly across V1–V28, Time, and Amount even after global StandardScaling.
+**BatchNorm** Each linear layer is followed by BatchNorm, which normalises activations within each mini-batch. This stabilises training by reducing internal covariate shift, especially important here because the feature scale varies significantly across V1–V28, Time, and Amount even after global StandardScaling.
 
 **Latent Space (Reparameterisation Trick):** Rather than sampling z directly (which is non-differentiable), the model uses:
 
@@ -107,19 +102,11 @@ z = μ + ε · σ     where ε ~ N(0, I)
 
 During training, ε adds stochasticity that regularises the latent space. During inference (model.eval()), the model returns μ directly, producing a deterministic, lower-variance reconstruction error. This determinism is important for a stable anomaly score.
 
-**Decoder** mirrors the encoder, mapping z back to the 30-dimensional input space:
-
-```
-Latent z (4) → Linear(4→16) → BatchNorm(16) → LeakyReLU(0.01) → Dropout(0.2)
-
-             → Linear(16→32) → BatchNorm(32) → LeakyReLU(0.01) → Dropout(0.2)
-
-             → Linear(32→30)   \[no final activation — raw output in StandardScaler space\]
-```
+**Decoder** mirrors the encoder, mapping z back to the 30-dimensional input space
 
 **Why no final activation?** The reconstruction target is the StandardScaler-normalised input, which lives on ℝ (unbounded real values). A sigmoid or tanh activation would clip the output range and introduce systematic reconstruction error. The linear output matches the target space exactly.
 
-**Total parameters:** With this architecture (30→32→16→μ/logσ² at dim 4, decoder mirrors), the model has approximately **3,400 trainable parameters**, deliberately compact to avoid memorising training samples.
+**Total parameters** With this architecture (30→32→16→μ/logσ² at dim 4, decoder mirrors), the model has approximately **3,400 trainable parameters**, deliberately compact to avoid memorising training samples.
 
 ### **2.2 Mathematical Formulation**
 
@@ -139,7 +126,7 @@ We maximise the ELBO, equivalently minimise
 recon_loss = (1/N) · Σᵢ Σ_d  w_d · (x_{id} − x̂_{id})²
 ```
     
-  where w\_d is the per-feature weight. Features with high |mean\_fraud − mean\_normal| receive elevated weights (V3, V14, V17 → w=3.0; V12, V10 → w=2.5; etc.). Features not listed default to w=1.0. This focuses reconstruction pressure on the dimensions most likely to spike when fraud passes through the normal-trained decoder.
+  where w_d is the per-feature weight. Features with high ```|mean_fraud − mean_normal|``` receive elevated weights (V3, V14, V17 → w=3.0; V12, V10 → w=2.5; etc.). Features not listed default to w=1.0. This focuses reconstruction pressure on the dimensions most likely to spike when fraud passes through the normal-trained decoder.
 
 * **KL Divergence** (closed form for diagonal Gaussians)
 
@@ -155,7 +142,7 @@ kl_loss = (1/N) · Σᵢ −½ · Σ_d (1 + log σ²_{id} − μ²_{id} − σ²
 β_effective(epoch) = min(BETA, BETA × epoch / KL_ANNEAL_EPOCHS)
 ```
 
-  This lets the model focus on reconstruction quality first (β≈0), then gradually tighten the latent space. Without annealing, early KL pressure can cause posterior collapse where the encoder ignores the input and outputs the prior — producing uninformative μ=0 for all inputs.
+  This lets the model focus on reconstruction quality first (β≈0), then gradually tighten the latent space. Without annealing, early KL pressure can cause posterior collapse where the encoder ignores the input and outputs the prior, producing uninformative μ=0 for all inputs.
 
 * **Anomaly Score** at inference time
 
@@ -282,12 +269,6 @@ With only 0.17% fraud, a model can achieve very low reconstruction loss while co
 **src/model.py ([source code](https://github.com/Nanokwok/Deep-Fraud-VAE/blob/main/src/model.py))**
 
 **Uses:** src/config.py → for ENCODER\_DIMS, DECODER\_DIMS, LATENT\_DIM, LEAKY\_RELU\_SLOPE, BETA
-
-**Architecture — BetaVAE(nn.Module)**!
-
-<img width="468" height="296" alt="image" src="https://github.com/user-attachments/assets/9b63c5a8-0eea-4e32-8426-f14f1c3b0360" />
-
-*β-Variational Autoencoder (β-VAE) Architecture*
 
 | Function | What it does |
 | ----- | ----- |
@@ -458,7 +439,7 @@ All hyperparameters are defined in src/config.py ([click to see](https://github.
 
 ## **5\. Evaluation & Results**
 
-### **5.1 Training vs. Validation Loss** {#5.1-training-vs.-validation-loss}
+### **5.1 Training vs. Validation Loss** 
 
 The model was trained for 200 epochs with early stopping. The best checkpoint (Experiment 07\) was saved at epoch 12, at which point Val AUPRC \= 0.6760 and Val AUROC \= 0.9462.
 
@@ -478,7 +459,7 @@ Lower reconstruction loss ≠ better anomaly detection. The model was becoming b
 
 source: experiments/exp\_07/training\_curves.png ([click to see](https://github.com/Nanokwok/Deep-Fraud-VAE/blob/main/experiments/exp_07/training_curves.png))
 
-### **5.2 Metrics on Test Set** {#5.2-metrics-on-test-set}
+### **5.2 Metrics on Test Set** 
 
 The test set contains 42,894 transactions (246 fraud, 42,648 normal, fraud rate 0.57%).
 
@@ -533,7 +514,7 @@ Source: reports/evaluate/figures/confusion\_matrix\_min\_cost.png [(click to see
 
 Source: reports/evaluate/figures/confusion\_matrix\_recall≥90pct.png [(click to see)](https://github.com/Nanokwok/Deep-Fraud-VAE/blob/main/reports/evaluate/figures/confusion_matrix_recall%E2%89%A590pct.png)
 
-### **5.3 Anomaly Score Analysis** {#5.3-anomaly-score-analysis}
+### **5.3 Anomaly Score Analysis** 
 
 <img width="375" height="146" alt="image" src="https://github.com/user-attachments/assets/444c4b56-9ef1-4675-b8fc-02011b4200d8" />
 
@@ -551,7 +532,7 @@ reports/evaluate/figures/score_distribution.png ([link](https://github.com/Nanok
 
 reports/evaluate/figures/score_vs_amount.png ([link](https://github.com/Nanokwok/Deep-Fraud-VAE/blob/main/reports/evaluate/figures/score_vs_amount.png)) scatter of anomaly score vs transaction Amount. This diagnoses amount-bias: frauds of all amounts tend to cluster at higher anomaly scores, but small-amount fraud overlaps with the normal distribution more than large-amount fraud. This is expected: fraudsters often start with small test charges.
 
-### **5.4 Feature Reconstruction Error** {#5.4-feature-reconstruction-error}
+### **5.4 Feature Reconstruction Error** 
 
 <img width="468" height="128" alt="image" src="https://github.com/user-attachments/assets/9526c7bf-8b23-4d5a-be6d-58ab29c694be" />
 
@@ -560,7 +541,7 @@ source: reports/evaluate/figures/feature\_reconstruction\_error.png
 
 Per-feature mean weighted reconstruction error, sorted by the fraud−normal gap. Features V14, V3, V17, V10, and V12 show the largest gap, confirming that the feature weights assigned from EDA effectively concentrated the anomaly signal in the most discriminative dimensions.
 
-### **5.5 Latent Space Visualisation** {#5.5-latent-space-visualisation}
+### **5.5 Latent Space Visualisation** 
 
 <img width="327" height="283" alt="image" src="https://github.com/user-attachments/assets/e118dbc7-956a-48ac-b28c-05b4f792a106" />
 
@@ -569,7 +550,7 @@ source: reports/evaluate/figures/latent\_tsne.png
 
 t-SNE projection of the 4-dimensional latent space (μ vectors) coloured by class. A stratified subsample (up to 5,000 points, balancing class representation) is used so fraud points are visible. If the encoder has learned fraud-discriminative structure despite never seeing fraud labels during training, fraud points will cluster separately from normal points in latent space. Clear cluster separation in this plot would confirm that the model's internal representation is already class-separating, the anomaly score threshold is then just a decision boundary on top of this.
 
-### **5.6 Discussion** {#5.6-discussion}
+### **5.6 Discussion** 
 
 The model performed this way because AUROC of 0.946 shows strong ranking ability where the model clearly separates most fraud from normal. The AUPRC of 0.676 reflects the harder challenge of maintaining high precision at high recall under extreme imbalance. The most common error cases are
 
@@ -581,7 +562,9 @@ Small-amount transactions where the fraud pattern resembles atypical-but-legitim
 
 Unusual legitimate transactions (large amounts, unusual timing, rare merchant types mapped to uncommon PCA values) that deviate from the normal training distribution and produce elevated reconstruction errors.
 
-The feature-weighting strategy demonstrably helps: the per-feature reconstruction error plot shows V14, V3, V17 dominating the fraud-normal gap that exactly the features with elevated weights. Without these weights, all 30 features would contribute equally, and the strong signal in V14/V3/V17 would be diluted by noise from the 20 low-signal features6\. Reference Articles & Related Work
+The feature-weighting strategy demonstrably helps: the per-feature reconstruction error plot shows V14, V3, V17 dominating the fraud-normal gap that exactly the features with elevated weights. Without these weights, all 30 features would contribute equally, and the strong signal in V14/V3/V17 would be diluted by noise from the 20 low-signal features
+
+## 6\. Reference Articles & Related Work
 
 1. Diederik P Kingma, Max Welling. (2013). Auto-Encoding Variational Bayes. *arXiv:1312.6114*. [https://arxiv.org/abs/1312.6114](https://arxiv.org/abs/1312.6114)   
 2. [Irina Higgins](https://openreview.net/profile?email=irinah%40google.com), [Loic Matthey](https://openreview.net/profile?email=lmatthey%40google.com), [Arka Pal](https://openreview.net/profile?email=arkap%40google.com), [Christopher Burgess](https://openreview.net/profile?email=cpburgess%40google.com), [Xavier Glorot](https://openreview.net/profile?email=glorotx%40google.com), [Matthew Botvinick](https://openreview.net/profile?email=botvinick%40google.com), [Shakir Mohamed](https://openreview.net/profile?email=shakir%40google.com), [Alexander Lerchner](https://openreview.net/profile?email=lerchner%40google.com). (2017). beta-VAE: Learning Basic Visual Concepts with a Constrained Variational Framework. *ICLR 2017*. [https://openreview.net/forum?id=Sy2fzU9gl](https://openreview.net/forum?id=Sy2fzU9gl)   
@@ -590,11 +573,9 @@ The feature-weighting strategy demonstrably helps: the per-feature reconstructio
 5. PyTorch Documentation \- torch.nn, torch.optim, DataLoader. [https://docs.pytorch.org/docs/2.11/index.html](https://docs.pytorch.org/docs/2.11/index.html)   
 6. Kaggle Dataset \- Credit Card Fraud Detection. Machine Learning Group, ULB. [https://www.kaggle.com/datasets/mlg-ulb/creditcardfraud](https://www.kaggle.com/datasets/mlg-ulb/creditcardfraud) 
 
-## 
-
 ## **7\. Team Contributions**
 
 | Team Member Name | Specific Tasks Completed | % of Total Work   |
 | :---- | :---- | :---- |
-| 6510545322 Chayakarn Hengsuwan | Tuned hyperparameters collaboratively via src/config.py: adjusted dropout rate, beta, epoch count, encoder/decoder dims across multiple config iterations Built model\_comparison.ipynb: compared β-VAE against Isolation Forest, One-Class SVM, Logistic Regression, Random Forest, and XGBoost on the same held-out test set Fixed Kaggle dataset download and Google Drive integration in the training and comparison notebooks Wrote the comparison results section of the final report, including the qualitative comparison table (Approach / Strength / Weakness) and the quantitative results table (AUPRC, AUROC, F1, Precision, Recall) Wrote and documented all explanation sections of the final report | 45% |
-| 6510545799 Atikarn Kruaykriangkrai | Set up the project structure and repository Conducted initial EDA (01\_eda.ipynb): class distribution, feature distributions, correlation heatmap, identifying discriminative features (V3, V14, V17, etc.) Built the data preprocessing pipeline (src/preprocess.py) — semi-supervised 3-way split, RobustScaler \+ StandardScaler \+ clipping pipeline, saving processed arrays Conducted post-preprocessing EDA (02\_post\_prep\_eda.ipynb) — verified scaling quality, split consistency, PCA feature boxplots Implemented the β-VAE architecture (src/model.py) — encoder/decoder with LeakyReLU, reparameterisation trick, weighted β-ELBO loss Built the full training loop (src/train.py): KL annealing, feature-specific denoising, AUPRC-based early stopping, checkpointing Ran all 7 training experiments, iteratively tuning: beta, latent dimensions, encoder/decoder dims, LeakyReLU activation, NOISE\_STD, KL anneal schedule Built the evaluation pipeline (src/evaluate.py): threshold sweep, 3 optimal thresholds, cost matrix, PR curve, latent t-SNE, feature reconstruction error plots Ran full model evaluation (04\_evaluate.ipynb) and generated all figures in reports/evaluate/ | 55% |
+| 6510545322 Chayakarn Hengsuwan | Tuned hyperparameters collaboratively via src/config.py: adjusted dropout rate, beta, epoch count, encoder/decoder dims across multiple config iterations Built model\_comparison.ipynb: compared β-VAE against Isolation Forest, One-Class SVM, Logistic Regression, Random Forest, and XGBoost on the same held-out test set Fixed Kaggle dataset download and Google Drive integration in the training and comparison notebooks Wrote the comparison results section of the final report, including the qualitative comparison table (Approach / Strength / Weakness) and the quantitative results table (AUPRC, AUROC, F1, Precision, Recall) Wrote and documented all explanation sections of the final report | 50% |
+| 6510545799 Atikarn Kruaykriangkrai | Set up the project structure and repository Conducted initial EDA (01\_eda.ipynb): class distribution, feature distributions, correlation heatmap, identifying discriminative features (V3, V14, V17, etc.) Built the data preprocessing pipeline (src/preprocess.py) — semi-supervised 3-way split, RobustScaler \+ StandardScaler \+ clipping pipeline, saving processed arrays Conducted post-preprocessing EDA (02\_post\_prep\_eda.ipynb) — verified scaling quality, split consistency, PCA feature boxplots Implemented the β-VAE architecture (src/model.py) — encoder/decoder with LeakyReLU, reparameterisation trick, weighted β-ELBO loss Built the full training loop (src/train.py): KL annealing, feature-specific denoising, AUPRC-based early stopping, checkpointing Ran all 7 training experiments, iteratively tuning: beta, latent dimensions, encoder/decoder dims, LeakyReLU activation, NOISE\_STD, KL anneal schedule Built the evaluation pipeline (src/evaluate.py): threshold sweep, 3 optimal thresholds, cost matrix, PR curve, latent t-SNE, feature reconstruction error plots Ran full model evaluation (04\_evaluate.ipynb) and generated all figures in reports/evaluate/ | 50% |
